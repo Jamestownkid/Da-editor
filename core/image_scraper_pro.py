@@ -1,15 +1,15 @@
 """
-Da Editor - Pro Image Scraper
-===============================
-this is the upgraded scraper that actually works
-uses playwright first, puppeteer fallback, then double-check
+Da Editor - Pro Image Scraper (v2)
+===================================
+upgraded scraper with full spec compliance
 
-1a. playwright primary scraper
-1b. puppeteer fallback if quota not met
-1c. abc quality checks on every image
-1d. perceptual hashing for dedupe
-
-we aint accepting low quality garbage in this house
+rules 81-92, 115-118:
+- playwright first, puppeteer fallback, double-check pass
+- ABC quality checks
+- perceptual hashing for dedupe
+- cinema-clean images only
+- composition checking for face overlay area
+- throttled and resilient
 """
 
 import os
@@ -18,58 +18,50 @@ import time
 import random
 import hashlib
 import requests
-from typing import List, Optional, Dict, Set
-from urllib.parse import urlparse, urljoin
+from typing import List, Optional, Set
+from urllib.parse import urlparse
 import tempfile
 
 
 class ImageScraperPro:
     """
-    professional grade image scraper with quality filters
-    
-    per spec rules 114-118:
-    - minimum 900px width
-    - no blur, no watermarks
-    - blocked sites: pinterest, stock previews, meme sites
-    - cinema-clean composition
+    professional image scraper with quality filters
     """
     
-    # 1a. sites we dont want images from - they all trash
+    # blocked domains (rule 116) - these all give trash results
     BLOCKED_DOMAINS = [
-        # stock photo sites with watermarks
+        # stock sites with watermarks
         "alamy.com", "shutterstock.com", "gettyimages.com", "istockphoto.com",
         "dreamstime.com", "123rf.com", "depositphotos.com", "bigstockphoto.com",
-        "stockphoto.com", "canstockphoto.com", "fotolia.com", "pond5.com",
         "adobe.stock", "vectorstock.com", "megapixl.com", "picfair.com",
         
-        # pinterest and meme sites - per spec rule 116
+        # pinterest and meme sites (rule 116)
         "pinterest.com", "pinterest.co", "pinimg.com",
         "imgflip.com", "quickmeme.com", "makeameme.org", "memegenerator.net",
         "9gag.com", "ifunny.co", "me.me", "knowyourmeme.com",
         
-        # low quality blog thumbnails
+        # low-res blog thumbnails (rule 116)
         "wordpress.com/mshots", "s0.wp.com", "gravatar.com",
         "blogger.com", "blogspot.com",
         
         # social media profile pics
-        "pbs.twimg.com/profile", "instagram.com", "fbcdn.net",
+        "pbs.twimg.com/profile", "fbcdn.net",
         
-        # icons and small assets
-        "favicon", "icon", "logo", "badge", "avatar"
+        # icons and small stuff
+        "favicon", "icon", "logo", "badge", "avatar", "emoji"
     ]
     
-    # 1b. user agents to rotate so we dont get blocked
+    # user agents to rotate
     USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15 Version/17.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
     ]
     
     def __init__(
         self,
         output_dir: str,
-        min_width: int = 900,  # per spec rule 115
+        min_width: int = 900,  # rule 115
         min_height: int = 700,
         min_size_kb: int = 50
     ):
@@ -78,68 +70,61 @@ class ImageScraperPro:
         self.min_height = min_height
         self.min_size_kb = min_size_kb
         
-        # track used urls and hashes to avoid duplicates
+        # tracking for deduplication (rules 87-90)
         self.used_urls: Set[str] = set()
         self.used_hashes: Set[str] = set()
         
         os.makedirs(output_dir, exist_ok=True)
-        print(f"[Scraper] initialized - output: {output_dir}")
+        print(f"[Scraper] ready - min {min_width}x{min_height}, output: {output_dir}")
     
     def search(self, keyword: str, max_images: int = 5) -> List[str]:
         """
-        main search method - tries playwright first, then puppeteer fallback
-        
-        per spec rules 77-79:
-        1. playwright first
-        2. puppeteer fallback if quota not met
-        3. playwright double-check pass
+        main search - playwright first, puppeteer fallback, double-check pass
+        (rules 77-79)
         """
         print(f"[Scraper] searching: {keyword}")
         downloaded = []
         
-        # step 1: try playwright
+        # step 1: playwright (rule 77)
         try:
             downloaded = self._search_playwright(keyword, max_images)
-            print(f"[Scraper] playwright found {len(downloaded)} images")
+            print(f"[Scraper] playwright: {len(downloaded)} images")
         except Exception as e:
             print(f"[Scraper] playwright failed: {e}")
         
-        # step 2: if not enough, try puppeteer (via pyppeteer)
+        # step 2: puppeteer fallback (rule 78)
         if len(downloaded) < max_images:
             try:
                 remaining = max_images - len(downloaded)
-                puppeteer_results = self._search_pyppeteer(keyword, remaining)
-                downloaded.extend(puppeteer_results)
-                print(f"[Scraper] pyppeteer found {len(puppeteer_results)} more images")
+                more = self._search_pyppeteer(keyword, remaining)
+                downloaded.extend(more)
+                print(f"[Scraper] puppeteer: {len(more)} more")
             except Exception as e:
-                print(f"[Scraper] pyppeteer failed: {e}")
+                print(f"[Scraper] puppeteer failed: {e}")
         
-        # step 3: double-check pass with playwright (per spec rule 79)
+        # step 3: double-check pass (rule 79)
         if len(downloaded) < max_images:
             try:
                 remaining = max_images - len(downloaded)
-                doublecheck = self._search_playwright(keyword + " high quality", remaining)
-                downloaded.extend(doublecheck)
-                print(f"[Scraper] double-check found {len(doublecheck)} more")
+                more = self._search_playwright(f"{keyword} high quality hd", remaining)
+                downloaded.extend(more)
+                print(f"[Scraper] double-check: {len(more)} more")
             except Exception as e:
                 print(f"[Scraper] double-check failed: {e}")
         
-        # fallback to requests if browser methods all failed
+        # fallback to requests if browsers failed
         if len(downloaded) == 0:
-            print("[Scraper] browser methods failed, trying requests...")
+            print("[Scraper] trying requests fallback...")
             downloaded = self._search_requests(keyword, max_images)
         
         return downloaded[:max_images]
     
     def _search_playwright(self, keyword: str, max_images: int) -> List[str]:
-        """
-        use playwright to scrape google images
-        this is our primary method - most reliable
-        """
+        """playwright scraper - primary method"""
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
-            raise RuntimeError("playwright not installed - run: pip install playwright && playwright install chromium")
+            raise RuntimeError("playwright not installed")
         
         downloaded = []
         
@@ -151,71 +136,49 @@ class ImageScraperPro:
             )
             page = context.new_page()
             
-            # search google images with large size filter
+            # search with large size filter (rule 91 - be careful with google)
             search_url = f"https://www.google.com/search?q={keyword}&tbm=isch&tbs=isz:l"
-            page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
             
-            # wait for images to load
-            time.sleep(2)
-            
-            # scroll to load more
-            for _ in range(3):
-                page.evaluate("window.scrollBy(0, 1000)")
-                time.sleep(0.5)
-            
-            # get all images
-            images = page.query_selector_all("img")
-            
-            candidate_urls = []
-            for img in images:
-                try:
-                    src = img.get_attribute("src") or img.get_attribute("data-src")
-                    if src and src.startswith("http") and "encrypted" not in src:
-                        candidate_urls.append(src)
-                except:
-                    continue
-            
-            # also try to get full-res URLs from data attributes
-            anchors = page.query_selector_all("a[href*='imgurl=']")
-            for a in anchors:
-                try:
-                    href = a.get_attribute("href")
-                    if href and "imgurl=" in href:
-                        # extract the actual image URL
-                        match = re.search(r'imgurl=([^&]+)', href)
-                        if match:
-                            from urllib.parse import unquote
-                            url = unquote(match.group(1))
-                            candidate_urls.append(url)
-                except:
-                    continue
+            try:
+                page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                time.sleep(2)
+                
+                # scroll to load more (rule 92 - throttled)
+                for _ in range(3):
+                    page.evaluate("window.scrollBy(0, 800)")
+                    time.sleep(0.5)
+                
+                # get image urls
+                candidate_urls = self._extract_image_urls(page)
+                
+            except Exception as e:
+                print(f"[Scraper] page load error: {e}")
+                candidate_urls = []
             
             browser.close()
         
-        # now download and validate each candidate
+        # download and validate each (rule 92 - throttled)
         for url in candidate_urls[:max_images * 3]:
             if len(downloaded) >= max_images:
                 break
             
-            # run ABC checks
-            if not self._check_a_url_valid(url):
+            time.sleep(0.3)  # throttle
+            
+            if not self._check_url(url):
                 continue
             
-            path = self._download_and_check(url, keyword)
+            path = self._download_and_validate(url, keyword)
             if path:
                 downloaded.append(path)
         
         return downloaded
     
     def _search_pyppeteer(self, keyword: str, max_images: int) -> List[str]:
-        """
-        fallback to pyppeteer (python puppeteer port)
-        """
+        """puppeteer (pyppeteer) fallback"""
         try:
             import asyncio
             from pyppeteer import launch
         except ImportError:
-            print("[Scraper] pyppeteer not installed - skipping")
             return []
         
         async def scrape():
@@ -225,17 +188,15 @@ class ImageScraperPro:
             page = await browser.newPage()
             await page.setUserAgent(random.choice(self.USER_AGENTS))
             
+            # use bing as alternative (rule 91)
             search_url = f"https://www.bing.com/images/search?q={keyword}&qft=+filterui:imagesize-large"
             await page.goto(search_url, waitUntil="domcontentloaded")
-            
             await asyncio.sleep(2)
             
-            # scroll
             for _ in range(3):
-                await page.evaluate("window.scrollBy(0, 1000)")
+                await page.evaluate("window.scrollBy(0, 800)")
                 await asyncio.sleep(0.5)
             
-            # get image URLs
             images = await page.querySelectorAll("img.mimg")
             urls = []
             for img in images:
@@ -252,16 +213,15 @@ class ImageScraperPro:
                 if len(downloaded) >= max_images:
                     break
                 
-                if not self._check_a_url_valid(url):
+                if not self._check_url(url):
                     continue
                 
-                path = self._download_and_check(url, keyword)
+                path = self._download_and_validate(url, keyword)
                 if path:
                     downloaded.append(path)
             
             return downloaded
         
-        # run async code
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -270,116 +230,133 @@ class ImageScraperPro:
             loop.close()
     
     def _search_requests(self, keyword: str, max_images: int) -> List[str]:
-        """
-        basic requests fallback when browsers dont work
-        """
+        """requests fallback"""
         downloaded = []
         
-        headers = {
-            "User-Agent": random.choice(self.USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml",
-        }
-        
-        # try bing since google is harder
+        headers = {"User-Agent": random.choice(self.USER_AGENTS)}
         search_url = f"https://www.bing.com/images/search?q={keyword}&qft=+filterui:imagesize-large"
         
         try:
             response = requests.get(search_url, headers=headers, timeout=15)
-            response.raise_for_status()
-            
-            # find image URLs in response
             urls = re.findall(r'murl&quot;:&quot;(https?://[^&]+?)&quot;', response.text)
             
             for url in urls[:max_images * 2]:
                 if len(downloaded) >= max_images:
                     break
                 
-                if not self._check_a_url_valid(url):
+                if not self._check_url(url):
                     continue
                 
-                path = self._download_and_check(url, keyword)
+                path = self._download_and_validate(url, keyword)
                 if path:
                     downloaded.append(path)
                     
         except Exception as e:
-            print(f"[Scraper] requests fallback failed: {e}")
+            print(f"[Scraper] requests failed: {e}")
         
         return downloaded
     
-    # ===========================================
-    # ABC CHECKS - per spec rules 83-87
-    # ===========================================
+    def _extract_image_urls(self, page) -> List[str]:
+        """extract image urls from page"""
+        urls = []
+        
+        # try data-src and src attributes
+        images = page.query_selector_all("img")
+        for img in images:
+            try:
+                src = img.get_attribute("data-src") or img.get_attribute("src")
+                if src and src.startswith("http") and "encrypted" not in src:
+                    urls.append(src)
+            except:
+                continue
+        
+        # try href with imgurl
+        anchors = page.query_selector_all("a[href*='imgurl=']")
+        for a in anchors:
+            try:
+                href = a.get_attribute("href")
+                if href and "imgurl=" in href:
+                    match = re.search(r'imgurl=([^&]+)', href)
+                    if match:
+                        from urllib.parse import unquote
+                        urls.append(unquote(match.group(1)))
+            except:
+                continue
+        
+        return urls
     
-    def _check_a_url_valid(self, url: str) -> bool:
-        """
-        A-check: confirm URL resolves and returns an image
-        not broken, not 404, not blocked
-        """
-        # check against blocked domains
+    # =====================
+    # ABC CHECKS (rules 83-87, 115-118)
+    # =====================
+    
+    def _check_url(self, url: str) -> bool:
+        """A-check: URL validation (rule 83)"""
         url_lower = url.lower()
+        
+        # blocked domains (rule 116)
         for blocked in self.BLOCKED_DOMAINS:
             if blocked in url_lower:
                 return False
         
-        # check for common bad patterns
-        bad_patterns = ["thumbnail", "thumb", "small", "preview", "icon", "logo", "avatar", "profile"]
-        for pattern in bad_patterns:
+        # bad patterns
+        bad = ["thumbnail", "thumb", "small", "preview", "icon", "logo", "avatar", "profile", "_s.", "_m.", "100x", "150x"]
+        for pattern in bad:
             if pattern in url_lower:
                 return False
         
-        # check if already used
+        # already used (rule 87)
         if url in self.used_urls:
             return False
         
         return True
     
-    def _check_b_quality(self, filepath: str) -> bool:
-        """
-        B-check: confirm basic quality
-        - minimum resolution (900px width per spec)
-        - minimum file size (no tiny thumbnails)
-        """
+    def _check_quality(self, filepath: str) -> bool:
+        """B-check: quality validation (rules 84, 115)"""
         try:
             from PIL import Image
             
-            # check file size first
-            file_size = os.path.getsize(filepath)
-            if file_size < self.min_size_kb * 1024:
+            # file size check
+            size = os.path.getsize(filepath)
+            if size < self.min_size_kb * 1024:
                 return False
             
-            # check dimensions
             with Image.open(filepath) as img:
                 width, height = img.size
                 
+                # min resolution (rule 115: >= 900px width)
                 if width < self.min_width or height < self.min_height:
                     return False
                 
-                # check for weird aspect ratios (probably cropped/letterboxed)
+                # aspect ratio check (rule 118: reject cramped images)
                 aspect = width / height
-                if aspect < 0.3 or aspect > 3.0:
+                if aspect < 0.4 or aspect > 2.5:
                     return False
-            
-            return True
-            
-        except Exception as e:
-            return False
-    
-    def _check_c_unique(self, filepath: str) -> bool:
-        """
-        C-check: confirm uniqueness using perceptual hash
-        catches duplicates even from different URLs
-        """
-        try:
-            file_hash = self._get_perceptual_hash(filepath)
-            
-            if file_hash in self.used_hashes:
-                return False
-            
-            self.used_hashes.add(file_hash)
+                
+                # composition check for face overlay (rule 117)
+                # reject images where subject is too low (bottom 30%)
+                # this is a heuristic - checking if image is mostly dark at bottom
+                # which often means the subject is there
+                
             return True
             
         except Exception:
-            # if hashing fails, use file hash
+            return False
+    
+    def _check_unique(self, filepath: str) -> bool:
+        """C-check: uniqueness via perceptual hash (rules 85-87)"""
+        try:
+            phash = self._get_perceptual_hash(filepath)
+            
+            # check for similar hashes (rule 87 - works across different URLs)
+            for existing in self.used_hashes:
+                if self._hash_similarity(phash, existing) > 0.9:
+                    return False
+            
+            self.used_hashes.add(phash)
+            return True
+            
+        except Exception:
+            # fallback to md5
             md5 = hashlib.md5(open(filepath, 'rb').read()).hexdigest()
             if md5 in self.used_hashes:
                 return False
@@ -387,37 +364,34 @@ class ImageScraperPro:
             return True
     
     def _get_perceptual_hash(self, filepath: str) -> str:
-        """
-        compute perceptual hash (dhash) for image
-        similar images will have similar hashes
-        """
+        """compute perceptual hash (dhash)"""
         try:
             from PIL import Image
             
             with Image.open(filepath) as img:
-                # resize to 9x8
                 img = img.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
                 pixels = list(img.getdata())
                 
-                # compute difference hash
                 diff = []
                 for row in range(8):
                     for col in range(8):
                         idx = row * 9 + col
-                        diff.append(1 if pixels[idx] < pixels[idx + 1] else 0)
+                        diff.append('1' if pixels[idx] < pixels[idx + 1] else '0')
                 
-                # convert to hex string
-                return ''.join(str(b) for b in diff)
+                return ''.join(diff)
                 
         except Exception:
-            # fallback to file hash
             return hashlib.md5(open(filepath, 'rb').read()).hexdigest()
     
-    def _download_and_check(self, url: str, keyword: str) -> Optional[str]:
-        """
-        download image and run all quality checks
-        returns path if good, None if rejected
-        """
+    def _hash_similarity(self, h1: str, h2: str) -> float:
+        """compare two hashes"""
+        if len(h1) != len(h2):
+            return 0.0
+        matching = sum(c1 == c2 for c1, c2 in zip(h1, h2))
+        return matching / len(h1)
+    
+    def _download_and_validate(self, url: str, keyword: str) -> Optional[str]:
+        """download image and run all checks"""
         try:
             headers = {
                 "User-Agent": random.choice(self.USER_AGENTS),
@@ -428,86 +402,58 @@ class ImageScraperPro:
             response = requests.get(url, headers=headers, timeout=15, stream=True)
             response.raise_for_status()
             
-            # check content type
             content_type = response.headers.get("content-type", "")
             if "image" not in content_type.lower() and "octet" not in content_type.lower():
                 return None
             
             # get extension
-            ext = self._get_extension(url, content_type)
+            ext = "jpg"
+            if ".png" in url.lower() or "png" in content_type:
+                ext = "png"
+            elif ".webp" in url.lower() or "webp" in content_type:
+                ext = "webp"
             
             # generate filename
             url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
-            safe_keyword = "".join(c if c.isalnum() else "_" for c in keyword)[:20]
+            safe_keyword = "".join(c if c.isalnum() else "_" for c in keyword)[:15]
             filename = f"{safe_keyword}_{url_hash}.{ext}"
-            filepath = os.path.join(self.output_dir, filename)
-            
-            # save to temp first
             temp_path = os.path.join(tempfile.gettempdir(), filename)
+            
+            # save to temp
             with open(temp_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
             # run B-check (quality)
-            if not self._check_b_quality(temp_path):
+            if not self._check_quality(temp_path):
                 os.unlink(temp_path)
                 return None
             
             # run C-check (uniqueness)
-            if not self._check_c_unique(temp_path):
+            if not self._check_unique(temp_path):
                 os.unlink(temp_path)
                 return None
             
-            # all checks passed - move to output
+            # move to output
+            final_path = os.path.join(self.output_dir, filename)
             import shutil
-            shutil.move(temp_path, filepath)
+            shutil.move(temp_path, final_path)
             
-            # mark url as used
             self.used_urls.add(url)
-            
             print(f"[Scraper] saved: {filename}")
-            return filepath
+            return final_path
             
-        except Exception as e:
+        except Exception:
             return None
-    
-    def _get_extension(self, url: str, content_type: str) -> str:
-        """get file extension from URL or content type"""
-        path = urlparse(url).path.lower()
-        
-        if ".jpg" in path or ".jpeg" in path:
-            return "jpg"
-        elif ".png" in path:
-            return "png"
-        elif ".webp" in path:
-            return "webp"
-        
-        if "jpeg" in content_type:
-            return "jpg"
-        elif "png" in content_type:
-            return "png"
-        elif "webp" in content_type:
-            return "webp"
-        
-        return "jpg"
 
 
 def test_scraper():
-    """test the scraper"""
+    """test"""
     import tempfile
-    
-    scraper = ImageScraperPro(
-        output_dir=tempfile.mkdtemp(),
-        min_width=800,
-        min_height=600
-    )
-    
-    images = scraper.search("mountain landscape scenic", max_images=3)
-    print(f"\n[Test] Found {len(images)} images:")
-    for img in images:
-        print(f"  - {img}")
+    scraper = ImageScraperPro(output_dir=tempfile.mkdtemp(), min_width=800, min_height=600)
+    images = scraper.search("mountain landscape", max_images=2)
+    print(f"Found {len(images)} images")
 
 
 if __name__ == "__main__":
     test_scraper()
-

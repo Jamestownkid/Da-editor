@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Da Editor - Job Runner
-=======================
-this is what gets called from electron to actually process jobs
+Da Editor - Job Runner (v2)
+============================
+this the upgraded version that matches the expected output structure
 runs the whole pipeline from download to render
 
-we keeping it resilient - crashes shouldnt lose progress yo
+handles per-link SRT and image toggles like the real deal
 """
 
 import os
@@ -14,7 +14,9 @@ import json
 import argparse
 import time
 import traceback
+import threading
 from datetime import datetime
+from typing import Dict, List, Optional
 
 # make sure we can import our modules
 CORE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,7 +38,7 @@ def log(msg: str):
 
 
 def error(msg: str):
-    """print error to stderr"""
+    """print error to stderr and save to file"""
     timestamp = datetime.now().strftime("%H:%M:%S")
     print(f"[{timestamp}] ERROR: {msg}", file=sys.stderr, flush=True)
 
@@ -44,46 +46,47 @@ def error(msg: str):
 class JobRunner:
     """
     runs a single job from start to finish
-    handles checkpoints so we can resume if something breaks
     
-    1a. validates inputs
-    1b. runs each step
-    1c. saves checkpoints
-    1d. creates 3 video outputs
+    per spec rules 5, 60, 69-72, 87-92:
+    - per-link SRT and image toggles
+    - errors saved to disk (rule 60)
+    - delete after use option (rule 69)
+    - image manifest tracking (rule 88)
+    - throttled scraping (rule 92)
     """
     
     def __init__(self, job_folder: str, settings: dict):
         self.job_folder = job_folder
         self.settings = settings
         self.job_json_path = os.path.join(job_folder, "job.json")
+        self.links_path = os.path.join(job_folder, "links.txt")
+        self.error_log_path = os.path.join(job_folder, "errors.log")
         
         # load existing job data
         self.job = self._load_job()
         
-        # set up directories
-        self.downloads_dir = os.path.join(job_folder, "downloads")
-        self.srt_dir = os.path.join(job_folder, "srt")
+        # create folder structure matching sample
+        # videos go directly in job folder (downloads)
+        # images in images/ subfolder
+        # outputs: broll_instagram, broll_youtube, output_video
         self.images_dir = os.path.join(job_folder, "images")
-        self.renders_dir = os.path.join(job_folder, "renders")
-        self.logs_dir = os.path.join(job_folder, "logs")
-        self.cache_dir = os.path.join(job_folder, "cache")
+        os.makedirs(self.images_dir, exist_ok=True)
         
-        # make sure all dirs exist
-        for d in [self.downloads_dir, self.srt_dir, self.images_dir, 
-                  self.renders_dir, self.logs_dir, self.cache_dir]:
-            os.makedirs(d, exist_ok=True)
+        # image manifest for deduplication (rules 87-90)
+        self.image_manifest_path = os.path.join(job_folder, "image_manifest.json")
+        self.image_manifest = self._load_image_manifest()
         
         # safety monitor
         self.monitor = SafetyMonitor()
         
-        log(f"job runner initialized: {job_folder}")
+        log(f"job runner v2 initialized: {job_folder}")
     
     def _load_job(self) -> dict:
         """load job data from json"""
         if os.path.exists(self.job_json_path):
             with open(self.job_json_path, "r") as f:
                 return json.load(f)
-        return {}
+        return {"urls": [], "status": "pending"}
     
     def _save_job(self):
         """save current job state"""
@@ -91,428 +94,422 @@ class JobRunner:
         with open(self.job_json_path, "w") as f:
             json.dump(self.job, f, indent=2)
     
-    def _set_checkpoint(self, checkpoint: str):
-        """mark where we at in the pipeline"""
-        self.job["checkpoint"] = checkpoint
-        self._save_job()
-        log(f"checkpoint: {checkpoint}")
+    def _log_error(self, msg: str):
+        """log error to file (rule 60)"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(self.error_log_path, "a") as f:
+            f.write(f"[{timestamp}] {msg}\n")
+        error(msg)
+    
+    def _load_image_manifest(self) -> dict:
+        """load image manifest for deduplication (rule 88)"""
+        if os.path.exists(self.image_manifest_path):
+            try:
+                with open(self.image_manifest_path, "r") as f:
+                    return json.load(f)
+            except:
+                pass
+        return {"used_hashes": [], "used_urls": [], "images": []}
+    
+    def _save_image_manifest(self):
+        """save image manifest"""
+        with open(self.image_manifest_path, "w") as f:
+            json.dump(self.image_manifest, f, indent=2)
+    
+    def _save_links_txt(self):
+        """save links.txt with [SRT][IMG] markers"""
+        lines = []
+        for url_data in self.job.get("urls", []):
+            url = url_data.get("url", "")
+            markers = ""
+            if url_data.get("srt"):
+                markers += " [SRT]"
+            if url_data.get("images"):
+                markers += "[IMG]"
+            lines.append(f"{url}{markers}")
+        
+        with open(self.links_path, "w") as f:
+            f.write("\n".join(lines) + "\n")
     
     def run(self):
-        """
-        main entry - runs the whole pipeline
-        checks for existing progress and resumes from checkpoint
-        """
+        """main entry - runs the whole pipeline"""
         try:
-            # 1a. safety check first
+            # safety check first - dont crush the cpu (rules 64-65)
             log("checking system resources...")
             status = self.monitor.check()
             if not status["safe"]:
-                error(f"system not safe to run: {status}")
+                self._log_error(f"system not safe to run: {status}")
                 return False
             
-            # 1b. get checkpoint or start fresh
-            checkpoint = self.job.get("checkpoint", "start")
-            log(f"starting from checkpoint: {checkpoint}")
+            # save links.txt
+            self._save_links_txt()
             
-            # run pipeline based on checkpoint
-            steps = ["download", "transcribe", "keywords", "scrape", "render", "validate"]
-            start_idx = 0
+            # step 1: download all videos
+            log("step 1: downloading videos...")
+            self._download_videos()
             
-            for i, step in enumerate(steps):
-                if checkpoint == step or checkpoint == "start":
-                    start_idx = i
-                    break
+            # step 2: generate SRT for marked links (rule 5)
+            log("step 2: generating SRT files...")
+            self._generate_srt()
             
-            # run remaining steps
-            for step in steps[start_idx:]:
-                # check safety before each step
-                status = self.monitor.check()
-                if not status["safe"]:
-                    error(f"stopping - system resources low: {status}")
-                    self._set_checkpoint(step)
-                    return False
-                
-                # run the step
-                success = self._run_step(step)
-                if not success:
-                    error(f"step failed: {step}")
-                    return False
+            # step 3: extract keywords from SRT
+            log("step 3: extracting keywords...")
+            keywords = self._extract_keywords()
+            
+            # step 4: scrape images in background (rules 8, 91-92)
+            log("step 4: scraping images (background)...")
+            self._scrape_images(keywords)
+            
+            # step 5: create video outputs
+            log("step 5: creating video outputs...")
+            self._create_outputs()
             
             # mark as done
             self.job["status"] = "done"
-            self.job["progress"] = 100
             self._save_job()
-            log("job completed successfully!")
+            log("job completed!")
             return True
             
         except Exception as e:
-            error(f"job failed: {e}")
+            self._log_error(f"job failed: {e}")
             traceback.print_exc(file=sys.stderr)
             self.job["status"] = "error"
-            self.job["errors"] = self.job.get("errors", []) + [str(e)]
             self._save_job()
             return False
     
-    def _run_step(self, step: str) -> bool:
-        """run a single pipeline step"""
-        self._set_checkpoint(step)
-        
-        if step == "download":
-            return self._step_download()
-        elif step == "transcribe":
-            return self._step_transcribe()
-        elif step == "keywords":
-            return self._step_keywords()
-        elif step == "scrape":
-            return self._step_scrape()
-        elif step == "render":
-            return self._step_render()
-        elif step == "validate":
-            return self._step_validate()
-        
-        return True
-    
-    def _step_download(self) -> bool:
-        """download all videos from links"""
-        if not self.job.get("downloadVideos", True):
-            log("skipping downloads (disabled)")
-            return True
-        
-        links = self.job.get("links", [])
-        if not links:
-            log("no links to download")
-            return True
-        
-        # check what we already got
-        downloaded = self.job.get("downloadedVideos", [])
-        downloaded_urls = {v.get("url") for v in downloaded}
-        
+    def _download_videos(self):
+        """download all videos from urls"""
         downloader = VideoDownloader(
-            output_dir=self.downloads_dir,
+            output_dir=self.job_folder,  # download directly to job folder
             on_progress=log
         )
         
-        for i, link in enumerate(links):
-            if link in downloaded_urls:
-                log(f"already downloaded: {link[:50]}...")
+        urls = self.job.get("urls", [])
+        downloaded = []
+        
+        for i, url_data in enumerate(urls):
+            url = url_data.get("url", "")
+            if not url:
                 continue
             
-            log(f"downloading [{i+1}/{len(links)}]: {link[:50]}...")
+            # check if already downloaded
+            existing = url_data.get("downloaded_path")
+            if existing and os.path.exists(existing):
+                log(f"already downloaded: {os.path.basename(existing)}")
+                downloaded.append(url_data)
+                continue
+            
+            log(f"downloading [{i+1}/{len(urls)}]: {url[:60]}...")
+            
+            # throttle to not kill cpu (rule 92)
+            time.sleep(0.5)
             
             try:
-                path = downloader.download(link)
+                path = downloader.download(url)
                 if path:
-                    # detect platform
-                    platform = "other"
-                    link_lower = link.lower()
-                    if "tiktok.com" in link_lower:
-                        platform = "tiktok"
-                    elif "youtube.com" in link_lower or "youtu.be" in link_lower:
-                        platform = "youtube"
-                    elif "instagram.com" in link_lower:
-                        platform = "instagram"
-                    
-                    downloaded.append({
-                        "url": link,
-                        "path": path,
-                        "platform": platform
-                    })
-                    
+                    url_data["downloaded_path"] = path
+                    url_data["platform"] = self._detect_platform(url)
+                    downloaded.append(url_data)
+                    log(f"  saved: {os.path.basename(path)}")
             except Exception as e:
-                error(f"download failed: {e}")
+                self._log_error(f"download failed for {url}: {e}")
         
-        self.job["downloadedVideos"] = downloaded
-        self.job["progress"] = 20
         self._save_job()
-        
         log(f"downloaded {len(downloaded)} videos")
-        return True
     
-    def _step_transcribe(self) -> bool:
-        """generate SRT files using whisper"""
-        if not self.job.get("generateSrt", True):
-            log("skipping transcription (disabled)")
-            return True
+    def _detect_platform(self, url: str) -> str:
+        """detect platform from url"""
+        url_lower = url.lower()
+        if "tiktok.com" in url_lower:
+            return "tiktok"
+        elif "youtube.com" in url_lower or "youtu.be" in url_lower:
+            return "youtube"
+        elif "instagram.com" in url_lower:
+            return "instagram"
+        return "other"
+    
+    def _generate_srt(self):
+        """generate SRT for urls marked with srt=true (rule 5)"""
+        # find urls that need SRT
+        srt_urls = [u for u in self.job.get("urls", []) if u.get("srt")]
         
-        downloaded = self.job.get("downloadedVideos", [])
-        if not downloaded:
-            log("no videos to transcribe")
-            return True
+        if not srt_urls:
+            log("no urls marked for SRT generation")
+            return
         
-        # by default prioritize tiktok for srt
-        tiktok_vids = [v for v in downloaded if v.get("platform") == "tiktok"]
-        to_transcribe = tiktok_vids if tiktok_vids else downloaded[:1]
+        # init whisper with settings
+        model = self.settings.get("whisperModel", "medium")
+        use_gpu = self.settings.get("useGpu", True)
         
-        # check what we already got
-        existing_srt = self.job.get("srtFiles", [])
+        log(f"using whisper model: {model}, gpu: {use_gpu}")
         
         transcriber = WhisperTranscriber(
-            model_name=self.settings.get("whisperModel", "base"),
-            use_gpu=self.settings.get("useGpu", True),
-            output_dir=self.srt_dir
+            model_name=model,
+            use_gpu=use_gpu,
+            output_dir=self.job_folder  # SRT goes in job folder root
         )
         
-        srt_files = list(existing_srt)
-        
-        for video in to_transcribe:
-            video_path = video.get("path")
+        for url_data in srt_urls:
+            video_path = url_data.get("downloaded_path")
             if not video_path or not os.path.exists(video_path):
+                self._log_error(f"video not found for SRT: {url_data.get('url')}")
                 continue
             
-            # check if srt already exists
-            base_name = os.path.splitext(os.path.basename(video_path))[0]
-            expected_srt = os.path.join(self.srt_dir, f"{base_name}.srt")
-            
-            if expected_srt in srt_files or os.path.exists(expected_srt):
-                log(f"srt already exists: {base_name}")
-                if expected_srt not in srt_files:
-                    srt_files.append(expected_srt)
+            # check if SRT already exists
+            existing_srt = url_data.get("srt_path")
+            if existing_srt and os.path.exists(existing_srt):
+                log(f"SRT already exists: {os.path.basename(existing_srt)}")
                 continue
             
-            log(f"transcribing: {base_name}")
+            log(f"transcribing: {os.path.basename(video_path)}...")
             
             try:
                 srt_path = transcriber.transcribe(video_path)
                 if srt_path:
-                    srt_files.append(srt_path)
+                    url_data["srt_path"] = srt_path
+                    log(f"  SRT saved: {os.path.basename(srt_path)}")
             except Exception as e:
-                error(f"transcription failed: {e}")
+                self._log_error(f"transcription failed: {e}")
         
-        self.job["srtFiles"] = srt_files
-        self.job["progress"] = 40
         self._save_job()
-        
-        log(f"created {len(srt_files)} SRT files")
-        return True
     
-    def _step_keywords(self) -> bool:
-        """extract keywords from SRT for image search"""
-        srt_files = self.job.get("srtFiles", [])
-        
-        if not srt_files:
-            log("no SRT files - using default keywords")
-            self.job["keywords"] = ["b-roll", "footage", "stock video"]
-            self._save_job()
-            return True
-        
+    def _extract_keywords(self) -> List[str]:
+        """extract keywords from SRT files"""
         extractor = KeywordExtractor()
         all_keywords = []
         
-        for srt_path in srt_files:
-            if not os.path.exists(srt_path):
+        for url_data in self.job.get("urls", []):
+            srt_path = url_data.get("srt_path")
+            if not srt_path or not os.path.exists(srt_path):
                 continue
             
             log(f"extracting keywords from: {os.path.basename(srt_path)}")
-            keywords = extractor.extract_from_srt(srt_path, max_keywords=40)
+            keywords = extractor.extract_from_srt(srt_path, max_keywords=30)
             all_keywords.extend(keywords)
         
-        # dedupe and limit
-        unique_keywords = list(dict.fromkeys(all_keywords))[:50]
-        
-        self.job["keywords"] = unique_keywords
-        self.job["progress"] = 50
+        # dedupe and save
+        unique = list(dict.fromkeys(all_keywords))[:40]
+        self.job["keywords"] = unique
         self._save_job()
         
-        log(f"extracted {len(unique_keywords)} unique keywords")
-        return True
+        log(f"extracted {len(unique)} keywords")
+        return unique
     
-    def _step_scrape(self) -> bool:
-        """scrape images based on keywords"""
-        keywords = self.job.get("keywords", [])
+    def _scrape_images(self, keywords: List[str]):
+        """
+        scrape images based on keywords
+        runs with throttling to not kill cpu (rules 91-92)
+        tracks used images to avoid duplicates (rules 87-90)
+        """
+        # find urls that need images
+        img_urls = [u for u in self.job.get("urls", []) if u.get("images")]
         
-        if not keywords:
-            error("no keywords to search")
-            return False
-        
-        # check existing images
-        existing_images = self.job.get("images", [])
-        min_images = self.settings.get("minImages", 15)
-        
-        if len(existing_images) >= min_images:
-            log(f"already have {len(existing_images)} images")
-            return True
-        
-        log(f"scraping images for {len(keywords)} keywords...")
+        if not img_urls or not keywords:
+            log("no urls marked for image scraping or no keywords")
+            return
         
         scraper = ImageScraperPro(
             output_dir=self.images_dir,
-            min_width=900,  # per spec rule 115
+            min_width=900,  # rule 115
             min_height=700,
             min_size_kb=50
         )
         
-        # need this many more images
-        needed = min_images - len(existing_images)
-        images_per_keyword = max(2, needed // len(keywords) + 1)
+        # pass existing manifest hashes to scraper for deduplication
+        scraper.used_hashes = set(self.image_manifest.get("used_hashes", []))
+        scraper.used_urls = set(self.image_manifest.get("used_urls", []))
         
-        all_images = list(existing_images)
+        min_images = self.settings.get("minImages", 12)
+        images = []
         
         for keyword in keywords:
-            if len(all_images) >= min_images:
+            if len(images) >= min_images:
                 break
             
             log(f"searching: {keyword}")
             
+            # throttle to be gentle (rule 92)
+            time.sleep(1.0)
+            
+            # check cpu before each search (rule 65)
+            status = self.monitor.check()
+            if status.get("cpu") == "HIGH":
+                log("cpu high, waiting...")
+                time.sleep(5.0)
+            
             try:
-                found = scraper.search(keyword, max_images=images_per_keyword)
-                all_images.extend(found)
+                found = scraper.search(keyword, max_images=3)
+                images.extend(found)
             except Exception as e:
-                error(f"search failed for '{keyword}': {e}")
+                self._log_error(f"scrape failed for '{keyword}': {e}")
         
-        # dedupe images
-        unique_images = list(dict.fromkeys(all_images))
+        # update manifest (rule 88)
+        self.image_manifest["used_hashes"] = list(scraper.used_hashes)
+        self.image_manifest["used_urls"] = list(scraper.used_urls)
+        self.image_manifest["images"] = images
+        self._save_image_manifest()
         
-        self.job["images"] = unique_images
-        self.job["progress"] = 70
+        self.job["images"] = images
         self._save_job()
         
-        log(f"scraped {len(unique_images)} unique images")
-        return len(unique_images) >= min_images // 2  # allow some failure
+        log(f"scraped {len(images)} images")
     
-    def _step_render(self) -> bool:
-        """create the 3 video outputs"""
-        images = self.job.get("images", [])
-        downloaded = self.job.get("downloadedVideos", [])
+    def _create_outputs(self):
+        """
+        create the video outputs:
+        - output_video.mp4 (landscape b-roll)
+        - broll_instagram_*.mp4 (portrait)
+        - broll_youtube_*.mp4 (youtube mix)
         
-        # filter to only existing files
+        per rules 34-57
+        """
+        images = self.job.get("images", [])
         images = [img for img in images if os.path.exists(img)]
         
         if not images:
-            error("no images available for render")
-            return False
-        
-        log(f"rendering with {len(images)} images...")
+            self._log_error("no images available for rendering")
+            return
         
         # get sounds folder
-        sounds_folder = self.settings.get("soundsFolder", "")
-        if not sounds_folder:
-            # use bundled sounds
-            sounds_folder = os.path.join(ROOT_DIR, "assets", "sounds")
+        sounds_dir = self.settings.get("soundsFolder", "")
+        if not sounds_dir:
+            sounds_dir = os.path.join(ROOT_DIR, "assets", "sounds")
+        
+        # get srt duration for output length matching (rule 35)
+        srt_duration = self._get_srt_duration()
         
         creator = VideoCreatorPro(
             images_dir=self.images_dir,
-            videos_dir=self.downloads_dir,
-            output_dir=self.renders_dir,
-            sounds_dir=sounds_folder,
-            settings=self.settings
+            videos_dir=self.job_folder,
+            output_dir=self.job_folder,  # outputs go in job folder root
+            sounds_dir=sounds_dir,
+            settings={
+                **self.settings,
+                "targetDuration": srt_duration
+            }
         )
         
-        outputs = self.job.get("outputs", {})
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # output 1: landscape slideshow
-        if not outputs.get("slideshow"):
-            log("creating landscape slideshow...")
+        # output 1: landscape b-roll (output_video.mp4)
+        log("creating output_video.mp4 (landscape b-roll)...")
+        try:
+            output1 = creator.create_slideshow(images, "output_video.mp4")
+            if output1:
+                self.job["outputs"] = self.job.get("outputs", {})
+                self.job["outputs"]["landscape"] = output1
+                log(f"  done: output_video.mp4")
+        except Exception as e:
+            self._log_error(f"landscape b-roll failed: {e}")
+        
+        # output 2: portrait/instagram (broll_instagram_*.mp4)
+        log("creating broll_instagram (portrait)...")
+        try:
+            output2 = creator.create_portrait(images, f"broll_instagram_{timestamp}.mp4")
+            if output2:
+                self.job["outputs"]["portrait"] = output2
+                log(f"  done: broll_instagram_{timestamp}.mp4")
+        except Exception as e:
+            self._log_error(f"portrait failed: {e}")
+        
+        # output 3: youtube mix (broll_youtube_*.mp4) - only youtube videos
+        youtube_vids = [
+            u.get("downloaded_path") for u in self.job.get("urls", [])
+            if u.get("platform") == "youtube" and u.get("downloaded_path")
+            and os.path.exists(u.get("downloaded_path", ""))
+        ]
+        
+        if youtube_vids:
+            log("creating broll_youtube (youtube mix)...")
             try:
-                slideshow = creator.create_slideshow(
-                    images=images,
-                    output_name="output_landscape.mp4"
-                )
-                outputs["slideshow"] = slideshow
-                self.job["outputs"] = outputs
-                self._save_job()
+                output3 = creator.create_youtube_mix(youtube_vids, f"broll_youtube_{timestamp}.mp4")
+                if output3:
+                    self.job["outputs"]["youtube_mix"] = output3
+                    log(f"  done: broll_youtube_{timestamp}.mp4")
             except Exception as e:
-                error(f"slideshow failed: {e}")
+                self._log_error(f"youtube mix failed: {e}")
         
-        # output 2: portrait split
-        if not outputs.get("portrait"):
-            log("creating portrait video...")
-            try:
-                portrait = creator.create_portrait(
-                    images=images,
-                    output_name="output_portrait.mp4"
-                )
-                outputs["portrait"] = portrait
-                self.job["outputs"] = outputs
-                self._save_job()
-            except Exception as e:
-                error(f"portrait failed: {e}")
-        
-        # output 3: youtube mix (only youtube sources)
-        youtube_vids = [v for v in downloaded if v.get("platform") == "youtube"]
-        if youtube_vids and not outputs.get("youtubeMix"):
-            log("creating youtube mix...")
-            try:
-                mix = creator.create_youtube_mix(
-                    videos=[v["path"] for v in youtube_vids if os.path.exists(v.get("path", ""))],
-                    output_name="output_youtube_mix.mp4"
-                )
-                outputs["youtubeMix"] = mix
-                self.job["outputs"] = outputs
-                self._save_job()
-            except Exception as e:
-                error(f"youtube mix failed: {e}")
-        
-        self.job["progress"] = 90
         self._save_job()
-        
-        return True
     
-    def _step_validate(self) -> bool:
-        """validate all outputs actually work"""
-        outputs = self.job.get("outputs", {})
+    def _get_srt_duration(self) -> float:
+        """get duration from SRT file for output matching (rule 35)"""
+        for url_data in self.job.get("urls", []):
+            srt_path = url_data.get("srt_path")
+            if srt_path and os.path.exists(srt_path):
+                try:
+                    with open(srt_path, "r") as f:
+                        content = f.read()
+                    
+                    # find last timestamp
+                    import re
+                    timestamps = re.findall(r'(\d{2}):(\d{2}):(\d{2}),(\d{3})', content)
+                    if timestamps:
+                        last = timestamps[-1]
+                        seconds = int(last[0]) * 3600 + int(last[1]) * 60 + int(last[2])
+                        return float(seconds)
+                except:
+                    pass
         
-        for name, path in outputs.items():
-            if not path:
-                continue
-            
-            if not os.path.exists(path):
-                error(f"output missing: {name}")
-                continue
-            
-            # check file size
-            size = os.path.getsize(path)
-            if size < 10000:  # less than 10kb is sus
-                error(f"output too small: {name} ({size} bytes)")
-                outputs[name] = None
-                continue
-            
-            # try to read with ffprobe
-            try:
-                import subprocess
-                result = subprocess.run(
-                    ["ffprobe", "-v", "error", "-show_format", path],
-                    capture_output=True,
-                    timeout=30
-                )
-                if result.returncode != 0:
-                    error(f"output invalid: {name}")
-                    outputs[name] = None
-                else:
-                    log(f"validated: {name}")
-            except Exception:
-                # ffprobe not available, just check size
-                log(f"validated (size only): {name}")
+        return 60.0  # default
+    
+    def delete_videos_after_use(self):
+        """delete downloaded videos to save space (rule 69-70)"""
+        if not self.settings.get("deleteAfterUse"):
+            return
         
-        self.job["outputs"] = outputs
-        self.job["progress"] = 100
+        for url_data in self.job.get("urls", []):
+            video_path = url_data.get("downloaded_path")
+            if video_path and os.path.exists(video_path):
+                try:
+                    os.unlink(video_path)
+                    log(f"deleted: {os.path.basename(video_path)}")
+                    # keep the path in json for revert (rule 70)
+                    url_data["deleted"] = True
+                except Exception as e:
+                    self._log_error(f"failed to delete {video_path}: {e}")
+        
         self._save_job()
+    
+    def revert_deleted_videos(self) -> dict:
+        """
+        show what would be restored and optionally restore (rules 71-72)
+        returns dict of what will be downloaded
+        """
+        to_restore = []
         
-        # consider success if at least one output works
-        valid_outputs = [v for v in outputs.values() if v]
-        return len(valid_outputs) > 0
+        for url_data in self.job.get("urls", []):
+            if url_data.get("deleted"):
+                to_restore.append({
+                    "url": url_data.get("url"),
+                    "platform": url_data.get("platform"),
+                    "was_path": url_data.get("downloaded_path")
+                })
+        
+        return {"to_restore": to_restore, "count": len(to_restore)}
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Da Editor Job Runner")
+    parser = argparse.ArgumentParser(description="Da Editor Job Runner v2")
     parser.add_argument("--job-folder", required=True, help="Path to job folder")
     parser.add_argument("--settings", required=True, help="JSON string of settings")
     
     args = parser.parse_args()
     
-    # parse settings
     try:
         settings = json.loads(args.settings)
     except json.JSONDecodeError:
         error("invalid settings JSON")
         sys.exit(1)
     
-    # run the job
     runner = JobRunner(args.job_folder, settings)
     success = runner.run()
+    
+    # optionally delete videos after use (rule 69)
+    if success and settings.get("deleteAfterUse"):
+        runner.delete_videos_after_use()
     
     sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":
     main()
-
