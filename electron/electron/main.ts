@@ -14,22 +14,63 @@ import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { spawn, ChildProcess, execSync } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
-import Store from 'electron-store'
 
-// store for app settings - persists between sessions
-const store = new Store({
-  defaults: {
-    outputFolder: path.join(app.getPath('documents'), 'DaEditor_Output'),
-    whisperModel: 'medium',  // default to medium per user request
-    useGpu: true,
-    bgColor: '#FFFFFF',
-    soundsFolder: '',
-    secondsPerImage: 4.0,
-    soundVolume: 0.8,
-    minImages: 15,
-    deleteAfterUse: false
+// use a simple JSON file for settings instead of electron-store
+// electron-store v8 has ESM issues that cause crashes
+const settingsPath = path.join(app.getPath('userData'), 'settings.json')
+
+const defaultSettings = {
+  outputFolder: '',
+  whisperModel: 'medium',  // default to medium per user request
+  useGpu: true,
+  bgColor: '#FFFFFF',
+  soundsFolder: '',
+  secondsPerImage: 4.0,
+  soundVolume: 0.8,
+  minImages: 15,
+  deleteAfterUse: false
+}
+
+// simple store implementation that doesn't crash
+const store = {
+  store: defaultSettings as Record<string, unknown>,
+  
+  load() {
+    try {
+      if (fs.existsSync(settingsPath)) {
+        const data = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+        this.store = { ...defaultSettings, ...data }
+      } else {
+        // set default output folder now that app is ready
+        this.store = { 
+          ...defaultSettings, 
+          outputFolder: path.join(app.getPath('documents'), 'DaEditor_Output')
+        }
+        this.save()
+      }
+    } catch (e) {
+      console.error('failed to load settings:', e)
+      this.store = { ...defaultSettings }
+    }
+  },
+  
+  save() {
+    try {
+      fs.writeFileSync(settingsPath, JSON.stringify(this.store, null, 2))
+    } catch (e) {
+      console.error('failed to save settings:', e)
+    }
+  },
+  
+  get(key: string) {
+    return this.store[key]
+  },
+  
+  set(key: string, value: unknown) {
+    this.store[key] = value
+    this.save()
   }
-})
+}
 
 let mainWindow: BrowserWindow | null = null
 let pythonProcess: ChildProcess | null = null
@@ -512,6 +553,9 @@ print(json.dumps(result))
 // ============================================
 
 app.whenReady().then(() => {
+  // load settings after app is ready
+  store.load()
+  
   createWindow()
   
   app.on('activate', () => {

@@ -60,6 +60,15 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
     if (isElectron) {
       const status = await window.electronAPI.scanWhisper()
       setWhisperStatus(status as WhisperStatus)
+      
+      // show alert with which models are installed
+      const installed = Object.entries(status)
+        .filter(([_, isInstalled]) => isInstalled)
+        .map(([model]) => model)
+      
+      if (installed.length > 0) {
+        console.log(`Whisper models found: ${installed.join(', ')}`)
+      }
     }
   }
 
@@ -204,11 +213,13 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                   className="btn-secondary flex items-center gap-2"
                 >
                   {scanning ? (
-                    <span className="animate-spin">+</span>
+                    <span className="animate-spin">*</span>
                   ) : (
-                    <span>*</span>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
                   )}
-                  Scan
+                  Scan Models
                 </button>
                 
                 <button 
@@ -219,11 +230,34 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                   {downloading ? (
                     <span className="animate-pulse">...</span>
                   ) : (
-                    <span>+</span>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
                   )}
                   Download {local.whisperModel}
                 </button>
               </div>
+
+              {/* show which models are installed */}
+              {whisperStatus && (
+                <div className="p-3 bg-da-medium rounded-lg">
+                  <div className="text-xs text-da-text-muted mb-2">Installed Models:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(whisperStatus).map(([model, installed]) => (
+                      <span
+                        key={model}
+                        className={`px-2 py-1 rounded text-xs ${
+                          installed 
+                            ? 'bg-da-success/20 text-da-success' 
+                            : 'bg-da-light text-da-text-muted'
+                        }`}
+                      >
+                        {model} {installed ? '✓' : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {downloadProgress && (
                 <div className="text-sm text-da-pink animate-pulse">{downloadProgress}</div>

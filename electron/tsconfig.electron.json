@@ -10,7 +10,8 @@
     "outDir": "dist",
     "rootDir": "electron",
     "strict": true,
-    "declaration": false
+    "declaration": true,
+    "composite": true
   },
   "include": ["electron/**/*"]
 }

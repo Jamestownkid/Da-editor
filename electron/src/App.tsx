@@ -1,8 +1,11 @@
 /**
- * Da Editor - Main App Component (v2)
+ * Da Editor - Main App Component (v3)
  * =====================================
- * updated to match expected folder structure
- * with per-link SRT/IMG toggles
+ * FIXED:
+ * - Resume now properly re-scans disk for all jobs
+ * - Backend owns job.json after processing starts (no overwrites)
+ * - Error box in bottom left with copy functionality
+ * - Better state management for job queue
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -11,6 +14,7 @@ import MainPanel from './components/MainPanel'
 import TopBar from './components/TopBar'
 import SettingsModal from './components/SettingsModal'
 import Confetti from './components/Confetti'
+import ErrorBox from './components/ErrorBox'
 import { Job, Settings, JobStatus, LinkItem } from './types'
 import './global.d.ts'
 
@@ -27,6 +31,7 @@ export default function App() {
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [logs, setLogs] = useState<string[]>([])
   const [errors, setErrors] = useState<string[]>([])
+  const [showErrorBox, setShowErrorBox] = useState(true)
 
   // load settings on mount
   useEffect(() => {
@@ -191,27 +196,42 @@ export default function App() {
         await new Promise(resolve => setTimeout(resolve, 3000))
       }
 
-      // mark as done
-      setJobs((prev: Job[]) => prev.map((j: Job) => 
-        j.id === pendingJob.id ? { ...j, status: 'done' as JobStatus, progress: 100 } : j
-      ))
-
+      // FIXED: re-read job.json from disk instead of overwriting
+      // backend (Python) owns the job.json after processing
       if (isElectron && pendingJob.folder) {
-        await window.electronAPI.saveJob(pendingJob.folder, { ...pendingJob, status: 'done', progress: 100 })
+        const updatedJob = await window.electronAPI.readJob(pendingJob.folder)
+        if (updatedJob) {
+          setJobs((prev: Job[]) => prev.map((j: Job) => 
+            j.id === pendingJob.id ? { ...updatedJob, folder: pendingJob.folder } : j
+          ))
+        } else {
+          // fallback if read fails
+          setJobs((prev: Job[]) => prev.map((j: Job) => 
+            j.id === pendingJob.id ? { ...j, status: 'done' as JobStatus, progress: 100 } : j
+          ))
+        }
+      } else {
+        setJobs((prev: Job[]) => prev.map((j: Job) => 
+          j.id === pendingJob.id ? { ...j, status: 'done' as JobStatus, progress: 100 } : j
+        ))
       }
 
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : 'unknown error'
-      setJobs((prev: Job[]) => prev.map((j: Job) => 
-        j.id === pendingJob.id ? { ...j, status: 'error' as JobStatus, errors: [...j.errors, errorMsg] } : j
-      ))
-
+      setErrors((prev: string[]) => [...prev, `Job ${pendingJob.id} failed: ${errorMsg}`])
+      
+      // re-read job from disk to get actual state
       if (isElectron && pendingJob.folder) {
-        await window.electronAPI.saveJob(pendingJob.folder, { 
-          ...pendingJob, 
-          status: 'error',
-          errors: [...pendingJob.errors, errorMsg]
-        })
+        const updatedJob = await window.electronAPI.readJob(pendingJob.folder)
+        if (updatedJob) {
+          setJobs((prev: Job[]) => prev.map((j: Job) => 
+            j.id === pendingJob.id ? { ...updatedJob, folder: pendingJob.folder, status: 'error' as JobStatus } : j
+          ))
+        } else {
+          setJobs((prev: Job[]) => prev.map((j: Job) => 
+            j.id === pendingJob.id ? { ...j, status: 'error' as JobStatus, errors: [...j.errors, errorMsg] } : j
+          ))
+        }
       }
     }
 
@@ -219,15 +239,45 @@ export default function App() {
     setTimeout(() => processNextJob(), 500)
   }
 
-  // resume jobs
-  const resumeJobs = () => {
-    const pending = jobs.filter((j: Job) => j.status === 'pending' || j.status === 'paused' || j.status === 'error')
-    if (pending.length > 0 && !isProcessing) {
-      const reset = jobs.map((j: Job) => 
-        j.status === 'error' || j.status === 'paused' ? { ...j, status: 'pending' as JobStatus } : j
-      )
-      setJobs(reset)
-      processNextJob(reset)
+  // resume jobs - FIXED: re-scan disk first to get ALL jobs
+  const resumeJobs = async () => {
+    if (isProcessing) return
+    
+    // first, re-scan disk to get all jobs (including ones from previous sessions)
+    if (isElectron && settings?.outputFolder) {
+      const diskJobs = await window.electronAPI.scanJobs(settings.outputFolder)
+      
+      // merge with current jobs, preferring disk versions
+      const mergedJobs = diskJobs.map((diskJob: Job) => {
+        // if job was error/paused, reset to pending for retry
+        if (diskJob.status === 'error' || diskJob.status === 'paused') {
+          return { ...diskJob, status: 'pending' as JobStatus }
+        }
+        // if job says "running" but we're not processing, it crashed - reset to pending
+        if (diskJob.status === 'running') {
+          return { ...diskJob, status: 'pending' as JobStatus }
+        }
+        return diskJob
+      })
+      
+      setJobs(mergedJobs)
+      
+      // start processing if there are pending jobs
+      const pendingJobs = mergedJobs.filter((j: Job) => j.status === 'pending')
+      if (pendingJobs.length > 0) {
+        processNextJob(mergedJobs)
+      }
+    } else {
+      // fallback to in-memory jobs
+      const pending = jobs.filter((j: Job) => j.status === 'pending' || j.status === 'paused' || j.status === 'error')
+      if (pending.length > 0) {
+        const reset = jobs.map((j: Job) => 
+          j.status === 'error' || j.status === 'paused' || j.status === 'running' 
+            ? { ...j, status: 'pending' as JobStatus } : j
+        )
+        setJobs(reset)
+        processNextJob(reset)
+      }
     }
   }
 
@@ -289,6 +339,16 @@ export default function App() {
       )}
 
       {showConfetti && <Confetti />}
+      
+      {/* Error box at bottom left - always visible when there are errors */}
+      {showErrorBox && errors.length > 0 && (
+        <ErrorBox 
+          errors={errors} 
+          logs={logs}
+          onClose={() => setShowErrorBox(false)}
+          onClear={() => setErrors([])}
+        />
+      )}
     </div>
   )
 }
