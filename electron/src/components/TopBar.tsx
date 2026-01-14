@@ -104,26 +104,36 @@ export default function TopBar({ isProcessing, currentJobId, onOpenSettings, onS
           Settings
         </button>
 
-        {/* window controls for non-mac */}
-        {navigator.platform.toLowerCase().includes('win') && (
-          <div className="flex items-center gap-1 ml-4">
-            <button className="w-8 h-8 hover:bg-da-light rounded flex items-center justify-center">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M20 14H4v-2h16" />
-              </svg>
-            </button>
-            <button className="w-8 h-8 hover:bg-da-light rounded flex items-center justify-center">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M4 4h16v16H4V4m2 2v12h12V6H6z" />
-              </svg>
-            </button>
-            <button className="w-8 h-8 hover:bg-da-error rounded flex items-center justify-center">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-              </svg>
-            </button>
-          </div>
-        )}
+        {/* window controls - for Windows and Linux */}
+        <div className="flex items-center gap-1 ml-4">
+          <button 
+            onClick={() => window.electronAPI?.minimizeWindow?.()}
+            className="w-8 h-8 hover:bg-da-light rounded flex items-center justify-center"
+            title="Minimize"
+          >
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M20 14H4v-2h16" />
+            </svg>
+          </button>
+          <button 
+            onClick={() => window.electronAPI?.maximizeWindow?.()}
+            className="w-8 h-8 hover:bg-da-light rounded flex items-center justify-center"
+            title="Maximize"
+          >
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M4 4h16v16H4V4m2 2v12h12V6H6z" />
+            </svg>
+          </button>
+          <button 
+            onClick={() => window.electronAPI?.closeWindow?.()}
+            className="w-8 h-8 hover:bg-da-error rounded flex items-center justify-center"
+            title="Close"
+          >
+            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* click outside to close menu */}

@@ -52,6 +52,13 @@ export default function App() {
         setLogs((prev: string[]) => [...prev.slice(-100), msg])
       })
       window.electronAPI.onJobError((msg: string) => {
+        // FILTER: whisper progress bars are NOT errors - they're just stderr output
+        // skip anything that looks like a progress bar (%|█ etc)
+        if (msg.includes('%|') || msg.includes('frames/s') || msg.includes('█')) {
+          // this is just whisper progress, not an error - add to logs instead
+          setLogs((prev: string[]) => [...prev.slice(-100), msg])
+          return
+        }
         setErrors((prev: string[]) => [...prev.slice(-50), msg])
       })
 

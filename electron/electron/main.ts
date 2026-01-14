@@ -123,6 +123,23 @@ function createWindow() {
 // IPC HANDLERS
 // ============================================
 
+// window controls
+ipcMain.handle('minimize-window', () => {
+  mainWindow?.minimize()
+})
+
+ipcMain.handle('maximize-window', () => {
+  if (mainWindow?.isMaximized()) {
+    mainWindow.unmaximize()
+  } else {
+    mainWindow?.maximize()
+  }
+})
+
+ipcMain.handle('close-window', () => {
+  mainWindow?.close()
+})
+
 // get settings
 ipcMain.handle('get-settings', () => {
   return store.store

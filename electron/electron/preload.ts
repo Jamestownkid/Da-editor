@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scanWhisper: () => ipcRenderer.invoke('scan-whisper'),
   downloadWhisper: (model: string) => ipcRenderer.invoke('download-whisper', model),
   
+  // window controls
+  minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
+  maximizeWindow: () => ipcRenderer.invoke('maximize-window'),
+  closeWindow: () => ipcRenderer.invoke('close-window'),
+  
   // event listeners for job progress
   onJobProgress: (callback: (msg: string) => void) => {
     ipcRenderer.on('job-progress', (_, msg) => callback(msg))
@@ -74,6 +79,9 @@ declare global {
       checkGpu: () => Promise<{ cuda: boolean; device: string; vram: number }>
       scanWhisper: () => Promise<Record<string, boolean>>
       downloadWhisper: (model: string) => Promise<{ success: boolean; output?: string }>
+      minimizeWindow: () => Promise<void>
+      maximizeWindow: () => Promise<void>
+      closeWindow: () => Promise<void>
       onJobProgress: (callback: (msg: string) => void) => void
       onJobError: (callback: (msg: string) => void) => void
       removeJobListeners: () => void

@@ -27,8 +27,14 @@ declare global {
         cpu: 'OK' | 'HIGH' | 'CRITICAL'
         gpu?: { available: boolean; name?: string; vram?: number }
       }>
-      checkPythonDeps: () => Promise<{ installed: boolean; python: string | null }>
+      checkFfmpeg: () => Promise<{ ffmpeg: boolean; ffprobe: boolean; message: string }>
+      checkPythonDeps: () => Promise<{ installed: boolean; python: string | null; missing?: string[] }>
+      checkGpu: () => Promise<{ cuda: boolean; device: string; vram: number }>
       scanWhisper: () => Promise<Record<string, boolean>>
+      downloadWhisper: (model: string) => Promise<{ success: boolean; output?: string }>
+      minimizeWindow: () => Promise<void>
+      maximizeWindow: () => Promise<void>
+      closeWindow: () => Promise<void>
       onJobProgress: (callback: (msg: string) => void) => void
       onJobError: (callback: (msg: string) => void) => void
       removeJobListeners: () => void

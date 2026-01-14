@@ -167,8 +167,8 @@ export default function MainPanel({ settings, selectedJob, onCreateJob, onStopJo
         </div>
       </div>
 
-      {/* links input area */}
-      <div className="flex-1 overflow-auto p-6">
+      {/* links input area - with always visible scrollbar */}
+      <div className="flex-1 overflow-y-scroll p-6 scrollbar-always-show">
         <div className="max-w-3xl mx-auto">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-semibold">
@@ -226,16 +226,16 @@ export default function MainPanel({ settings, selectedJob, onCreateJob, onStopJo
             </div>
           )}
 
-          {/* start button */}
+          {/* start button - FIXED: can still queue jobs while processing */}
           <button
             onClick={handleStartJob}
-            disabled={isProcessing || links.length === 0}
+            disabled={links.length === 0}
             className="w-full btn-primary py-4 text-lg font-bold flex items-center justify-center gap-3 group"
           >
             <svg className="w-6 h-6 group-hover:animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
-            {isProcessing ? 'PROCESSING...' : 'START JOB'}
+            {isProcessing ? 'QUEUE JOB (1 processing)' : 'START JOB'}
           </button>
 
           {/* what this creates */}

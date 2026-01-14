@@ -23,6 +23,8 @@ export interface Settings {
   soundVolume: number  // rule 42
   minImages: number
   deleteAfterUse?: boolean  // rule 69
+  minImageWidth?: number  // image quality
+  minImageHeight?: number  // image quality
 }
 
 // per-link data with SRT/IMG toggles (rule 5)

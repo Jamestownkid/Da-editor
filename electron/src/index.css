@@ -10,23 +10,40 @@
 @tailwind utilities;
 
 /* 1a. custom scrollbar - gotta make everything look clean */
+/* always visible scrollbar - make it obvious you can scroll */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #14141f;
-  border-radius: 4px;
+  background: #1a1a2e;
+  border-radius: 5px;
+  border: 1px solid #2a2a4e;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #e94560;
-  border-radius: 4px;
+  background: linear-gradient(180deg, #e94560, #ff4d6d);
+  border-radius: 5px;
+  border: 2px solid #1a1a2e;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #ff6b8a;
+  background: linear-gradient(180deg, #ff6b8a, #ff8fab);
+}
+
+/* force scrollbar to always show */
+.scrollbar-always-show {
+  overflow-y: scroll !important;
+}
+
+.scrollbar-always-show::-webkit-scrollbar {
+  width: 12px;
+}
+
+.scrollbar-always-show::-webkit-scrollbar-thumb {
+  background: #e94560;
+  min-height: 50px;
 }
 
 /* 1b. selection color */

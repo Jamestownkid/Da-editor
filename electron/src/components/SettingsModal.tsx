@@ -404,6 +404,45 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
             </div>
           </section>
 
+          {/* image quality section */}
+          <section>
+            <SectionHeader title="Image Quality Settings" />
+            
+            <div className="mt-4 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm text-da-text-muted mb-2 block">Min Image Width (px)</label>
+                  <input
+                    type="number"
+                    min="600"
+                    max="1920"
+                    step="100"
+                    value={local.minImageWidth || 900}
+                    onChange={e => handleChange('minImageWidth', parseInt(e.target.value))}
+                    className="input-field"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-da-text-muted mb-2 block">Min Image Height (px)</label>
+                  <input
+                    type="number"
+                    min="400"
+                    max="1080"
+                    step="100"
+                    value={local.minImageHeight || 700}
+                    onChange={e => handleChange('minImageHeight', parseInt(e.target.value))}
+                    className="input-field"
+                  />
+                </div>
+              </div>
+              
+              <div className="p-3 bg-da-medium rounded-lg text-xs text-da-text-muted">
+                Higher values = better quality images, but fewer results. 
+                Default: 900x700 (HD quality)
+              </div>
+            </div>
+          </section>
+
           {/* output section */}
           <section>
             <SectionHeader title="Output Settings" />
