@@ -313,7 +313,7 @@ class JobRunner:
             manifest_path=self.global_manifest_path  # cross-job deduplication
         )
         
-        min_images = self.settings.get("minImages", 12)
+        min_images = self.settings.get("minImages", 20)  # increased default
         images = []
         
         for keyword in keywords:
@@ -383,12 +383,12 @@ class JobRunner:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         outputs = {}
         
-        # output 1: landscape b-roll (output_video.mp4)
+        # output 1: landscape b-roll (output_video.mp4) - UI key: "slideshow"
         log("creating output_video.mp4 (landscape b-roll)...")
         try:
             output1 = creator.create_slideshow(images, "output_video.mp4")
             if output1:
-                outputs["landscape"] = output1
+                outputs["slideshow"] = output1  # matches UI key
                 log(f"  done: output_video.mp4")
         except Exception as e:
             self._log_error(f"landscape b-roll failed: {e}")
@@ -417,7 +417,7 @@ class JobRunner:
             try:
                 output3 = creator.create_youtube_mix(youtube_vids, f"broll_youtube_{timestamp}.mp4")
                 if output3:
-                    outputs["youtube_mix"] = output3
+                    outputs["youtubeMix"] = output3  # matches UI key (camelCase)
                     log(f"  done: broll_youtube_{timestamp}.mp4")
             except Exception as e:
                 self._log_error(f"youtube mix failed: {e}")

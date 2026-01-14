@@ -19,7 +19,7 @@ Da Editor takes YouTube, TikTok, and Instagram links and creates three professio
 - Extract keywords from subtitles for image search
 - Scrape high-quality images with Playwright + Puppeteer
 - Create videos with Ken Burns zoom/pan effects
-- Add sound effects between image transitions
+- Add sound effects between image transitions (ching sounds prioritized)
 - Job queue system that processes one at a time
 - Resume from crashes - jobs persist to disk
 - System safety checks (disk, RAM, CPU)
@@ -27,19 +27,26 @@ Da Editor takes YouTube, TikTok, and Instagram links and creates three professio
 
 ## Installation
 
-### Quick Setup (Recommended)
+### One-Click Install (Recommended)
 
+**Linux/Mac:**
 ```bash
-# 1. Clone or download the repo
-git clone https://github.com/Jamestownkid/Da-editor.git
-cd Da-editor
-
-# 2. Run the setup script
-python setup.py
-
-# 3. Run the app
-cd electron && npm run dev
+# paste this in your terminal
+curl -sSL https://raw.githubusercontent.com/Jamestownkid/Da-editor/main/install.sh | bash
 ```
+
+Or if you downloaded the zip:
+```bash
+cd ~/Downloads/Da-editor
+chmod +x install.sh open.sh update.sh
+./install.sh
+```
+
+**Windows:**
+1. Download the zip from GitHub
+2. Extract to your Downloads folder
+3. Double-click `install.bat` (coming soon)
+4. Or run: `cd %USERPROFILE%\Downloads\Da-editor && npm install && cd electron && npm run dev`
 
 ### Manual Setup
 
@@ -47,11 +54,13 @@ cd electron && npm run dev
 # Install Python dependencies
 pip install -r requirements.txt
 
-# Install Playwright browsers
-python -m playwright install chromium
+# Install FFmpeg
+# Ubuntu/Debian: sudo apt install ffmpeg
+# Mac: brew install ffmpeg
+# Windows: winget install ffmpeg
 
-# Install spaCy language model
-python -m spacy download en_core_web_sm
+# Install Playwright browsers
+playwright install chromium
 
 # Install Node.js dependencies (for Electron UI)
 cd electron && npm install
@@ -66,24 +75,28 @@ cd electron && npm install
 
 ## Usage
 
-### Desktop App (Electron)
+### Opening the App
 
+**After first install:**
 ```bash
-cd electron
-npm run dev
+cd ~/Downloads/Da-editor && ./open.sh
 ```
 
-### Python CLI
-
+**To update and open:**
 ```bash
-python main.py
+cd ~/Downloads/Da-editor && ./update.sh
 ```
 
-### CLI Mode
+### What You'll See
 
-```bash
-python -m core.job_runner --job-folder /path/to/job --settings '{"whisperModel": "base"}'
-```
+1. Pink minimalist desktop app opens
+2. Paste your video links in the main area
+3. Click [SRT] button next to links you want transcribed
+4. Click [IMG] button next to links you want images from
+5. Set your job name and output folder
+6. Click Start Job
+7. Watch the magic happen
+8. Three videos appear in your job folder
 
 ## How It Works
 
@@ -92,7 +105,7 @@ python -m core.job_runner --job-folder /path/to/job --settings '{"whisperModel":
 3. **Download** - Videos are downloaded via yt-dlp
 4. **Transcribe** - Whisper generates SRT subtitles
 5. **Keywords** - NLP extracts searchable terms from subtitles
-6. **Scrape** - Images are gathered from the web (Playwright + Puppeteer)
+6. **Scrape** - Images are gathered from the web (Playwright)
 7. **Render** - FFmpeg creates the three video outputs
 
 ## Project Structure
@@ -118,12 +131,12 @@ da_editor/
 
 All settings are in the Settings panel:
 
-- **Whisper Model** - tiny/base/small/medium/large
+- **Whisper Model** - tiny/base/small/medium/large (default: medium)
 - **GPU Mode** - Use CUDA for faster transcription
 - **Sounds Folder** - Custom sound effects
 - **Background Color** - Default white, customizable
 - **Seconds Per Image** - How long each image shows
-- **Minimum Images** - Target image count for scraping
+- **Minimum Images** - Target image count for scraping (default: 20)
 
 ## Job Folder Structure
 
@@ -131,12 +144,13 @@ Each job creates:
 ```
 MyJob/
 ├── job.json           # Job state and settings
-├── downloads/         # Downloaded videos
-├── srt/               # Generated subtitles
 ├── images/            # Scraped images
-├── renders/           # Final video outputs
-├── logs/              # Processing logs
-└── cache/             # Temp files
+├── image_manifest.json # Tracks used images
+├── links.txt          # Your links with markers
+├── errors.log         # Any errors
+├── output_video.mp4   # Landscape output
+├── broll_instagram_*.mp4  # Portrait output
+└── broll_youtube_*.mp4    # YouTube mix output
 ```
 
 ## Troubleshooting
@@ -148,7 +162,7 @@ MyJob/
 
 **Playwright browsers not installed**
 ```bash
-python -m playwright install chromium
+playwright install chromium
 ```
 
 **Whisper out of memory**
@@ -160,6 +174,11 @@ python -m playwright install chromium
 - Some sites block automated requests
 - The app uses multiple fallback methods
 - Results may vary by region
+
+**App won't open**
+```bash
+cd electron && npm install && npm run build && npm run dev
+```
 
 ## License
 

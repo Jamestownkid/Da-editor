@@ -604,22 +604,45 @@ class DaEditorApp(ctk.CTk):
     def _run_job_processor(self, job):
         """
         actual job processing - runs in background
-        this is where we call the core modules
+        uses job_runner.py (the unified runner)
         """
         try:
-            from core.processor import JobProcessor
+            from core.job_runner import JobRunner
+            import json
             
-            processor = JobProcessor(
-                job=job,
-                output_folder=self.output_folder,
-                settings=self.settings,
-                on_progress=lambda msg: self._update_status(msg),
-                on_error=lambda msg: self._log_error(msg)
-            )
+            # convert settings to camelCase for job_runner
+            settings = {
+                "whisperModel": self.settings.get("whisper_model", "medium"),
+                "useGpu": self.settings.get("use_gpu", True),
+                "outputFolder": self.output_folder,
+                "soundsFolder": self.settings.get("sounds_folder", ""),
+                "secondsPerImage": self.settings.get("seconds_per_image", 4.0),
+                "soundVolume": self.settings.get("sound_volume", 0.8),
+                "minImages": self.settings.get("min_images", 20),
+                "bgColor": self.settings.get("bg_color", "#FFFFFF")
+            }
             
-            processor.run()
+            job_folder = os.path.join(self.output_folder, job["id"])
             
-            job["status"] = "done"
+            # update job.json with urls in correct format
+            urls = []
+            for link in job.get("links", []):
+                urls.append({
+                    "url": link,
+                    "srt": job.get("generate_srt", True),
+                    "images": True
+                })
+            job["urls"] = urls
+            self._save_job(job)
+            
+            runner = JobRunner(job_folder, settings)
+            success = runner.run()
+            
+            if success:
+                job["status"] = "done"
+            else:
+                job["status"] = "error"
+            
             self._save_job(job)
             
         except Exception as e:

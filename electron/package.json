@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Video B-Roll Automation Tool - turns your links into fire content",
   "main": "dist/main.js",
+  "type": "commonjs",
   "scripts": {
     "dev": "concurrently \"npm run dev:react\" \"npm run dev:electron\"",
     "dev:react": "vite",

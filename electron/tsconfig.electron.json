@@ -8,10 +8,9 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "outDir": "dist",
+    "rootDir": "electron",
     "strict": true,
-    "composite": true,
-    "declaration": true
+    "declaration": false
   },
   "include": ["electron/**/*"]
 }
-

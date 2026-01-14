@@ -302,6 +302,7 @@ class VideoCreatorPro:
         - random non-linear order (rules 54-55)
         - muted audio (rule 56)
         - feels intentional not random (rule 57)
+        - HIGHLY RANDOMIZED: different start positions, varied clip lengths
         """
         videos = [v for v in videos if os.path.exists(v)]
         if not videos:
@@ -310,10 +311,11 @@ class VideoCreatorPro:
         
         output_path = os.path.join(self.output_dir, output_name)
         
-        target_duration = float(self.settings.get("targetDuration", 60.0))
-        clip_min = 1.5
-        clip_max = 3.5
-        avoid_percent = 0.10  # 10% at each end
+        # cap target duration at 120 seconds max for performance
+        target_duration = min(float(self.settings.get("targetDuration", 60.0)), 120.0)
+        clip_min = 1.2
+        clip_max = 4.0
+        avoid_percent = 0.15  # 15% at each end for cleaner clips
         
         width, height, fps = 1920, 1080, 30
         
@@ -327,7 +329,7 @@ class VideoCreatorPro:
                 if not duration or duration < 15:
                     continue
                 
-                # safe zone: middle 80% (rules 52-53)
+                # safe zone: middle 70% (rules 52-53) - avoid more
                 start_safe = duration * avoid_percent
                 end_safe = duration * (1 - avoid_percent)
                 safe_length = end_safe - start_safe
@@ -335,12 +337,26 @@ class VideoCreatorPro:
                 if safe_length < clip_max * 2:
                     continue
                 
-                # extract 3-6 random clips (rule 54)
-                num_clips = random.randint(3, min(6, int(safe_length / clip_max)))
+                # extract MORE clips from different positions (rule 54)
+                # divide safe zone into segments for better coverage
+                num_clips = random.randint(4, min(8, int(safe_length / clip_min)))
                 
-                for _ in range(num_clips):
+                # divide the safe zone into segments to ensure coverage
+                segment_size = safe_length / num_clips
+                
+                for segment_idx in range(num_clips):
+                    # vary clip duration more
                     clip_dur = random.uniform(clip_min, clip_max)
-                    clip_start = random.uniform(start_safe, end_safe - clip_dur)
+                    
+                    # pick from different parts of the video (not all clustered)
+                    segment_start = start_safe + (segment_idx * segment_size)
+                    segment_end = min(segment_start + segment_size, end_safe - clip_dur)
+                    
+                    if segment_end <= segment_start:
+                        continue
+                    
+                    # random position within this segment
+                    clip_start = random.uniform(segment_start, segment_end)
                     
                     clip_path = os.path.join(self.output_dir, f"_yt_{len(all_clips):03d}.mp4")
                     
@@ -515,6 +531,7 @@ class VideoCreatorPro:
         """
         create portrait clip with white bottom (rule 45)
         image goes in top 2/3, bottom 1/3 is white for face overlay
+        IMAGE IS AT THE VERY TOP - no white space above
         """
         total_frames = int(duration * fps)
         
@@ -523,17 +540,17 @@ class VideoCreatorPro:
         zoom_rate = 0.0004
         
         if effect == "zoom_in":
-            zoom_expr = f"zoompan=z='min(1+{zoom_rate}*on,1.1)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={width}x{image_area_height}:fps={fps}"
+            zoom_expr = f"zoompan=z='min(1+{zoom_rate}*on,1.1)':x='iw/2-(iw/zoom/2)':y='0':d={total_frames}:s={width}x{image_area_height}:fps={fps}"
         else:
-            zoom_expr = f"zoompan=z='if(eq(on,1),1.1,max(1.1-{zoom_rate}*on,1))':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={width}x{image_area_height}:fps={fps}"
+            zoom_expr = f"zoompan=z='if(eq(on,1),1.1,max(1.1-{zoom_rate}*on,1))':x='iw/2-(iw/zoom/2)':y='0':d={total_frames}:s={width}x{image_area_height}:fps={fps}"
         
         # build filter:
         # 1. scale image to fit in top area with some room for motion
-        # 2. apply zoompan
-        # 3. pad to full height with white at bottom
+        # 2. apply zoompan - keep y=0 to stay at TOP
+        # 3. pad to full height with white at bottom ONLY (x=0, y=0 means top-left)
         filter_chain = (
             f"scale={int(width*1.15)}:{int(image_area_height*1.15)}:force_original_aspect_ratio=decrease,"
-            f"pad={int(width*1.15)}:{int(image_area_height*1.15)}:(ow-iw)/2:(oh-ih)/2:color=#{bg_color},"
+            f"pad={int(width*1.15)}:{int(image_area_height*1.15)}:(ow-iw)/2:0:color=#{bg_color},"
             f"{zoom_expr},"
             f"pad={width}:{height}:0:0:color=#{bg_color}"
         )
@@ -573,7 +590,11 @@ class VideoCreatorPro:
         clip_duration: float,
         volume: float
     ) -> Optional[str]:
-        """create audio track with sfx at transitions (rules 41, 42)"""
+        """
+        create audio track with sfx at transitions (rules 41, 42)
+        PRIORITIZE CHING SOUND (20%+ of the time)
+        USE DIFFERENT SOUNDS FOR EACH TRANSITION
+        """
         if not self.sound_files:
             return None
         
@@ -590,21 +611,46 @@ class VideoCreatorPro:
                 output
             ], capture_output=True, check=True)
             
-            # pick random sounds for this video
-            sounds_to_use = random.sample(self.sound_files, min(len(self.sound_files), 6))
+            # find ching sounds (prioritize these)
+            ching_sounds = [s for s in self.sound_files if 'ching' in s.lower() or 'ping' in s.lower()]
+            other_sounds = [s for s in self.sound_files if s not in ching_sounds]
+            
+            # if no ching found, treat all as other
+            if not ching_sounds:
+                ching_sounds = other_sounds[:2] if len(other_sounds) >= 2 else other_sounds
+            
+            # build the sound order: ching 20-30% of the time, rest are different sounds
+            num_transitions = num_clips - 1
+            sound_order = []
+            used_sounds = set()
+            
+            for i in range(num_transitions):
+                # use ching ~25% of the time (every 4th transition roughly)
+                if random.random() < 0.25 and ching_sounds:
+                    sound = random.choice(ching_sounds)
+                else:
+                    # pick a DIFFERENT sound than the last one
+                    available = [s for s in other_sounds if s not in used_sounds] or other_sounds
+                    sound = random.choice(available)
+                    used_sounds.add(sound)
+                    # reset if we've used all
+                    if len(used_sounds) >= len(other_sounds):
+                        used_sounds.clear()
+                
+                sound_order.append(sound)
             
             # overlay sounds at each transition
             current_time = clip_duration - 0.3  # start slightly before transition
             
-            for i in range(num_clips - 1):
+            for i, sound in enumerate(sound_order):
                 if current_time >= total_duration:
                     break
                 
-                sound = random.choice(sounds_to_use)
                 temp = os.path.join(self.output_dir, f"_sfx_{i:03d}.wav")
                 
-                # volume boost (rule 42 - ping sounds should be audible)
-                boost = min(volume * 2.0, 2.5)
+                # volume boost - ching sounds get extra boost
+                is_ching = 'ching' in sound.lower() or 'ping' in sound.lower()
+                boost = min(volume * (2.5 if is_ching else 2.0), 3.0)
                 
                 delay_ms = int(current_time * 1000)
                 

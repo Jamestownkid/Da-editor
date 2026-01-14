@@ -1,8 +1,7 @@
 /** @type {import('tailwindcss').Config} */
-// tailwind config for da editor
-// pink vibes all day
+// tailwind config for da editor - pink vibes all day
 
-export default {
+module.exports = {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -68,4 +67,3 @@ export default {
   },
   plugins: [],
 }
-

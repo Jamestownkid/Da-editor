@@ -1,8 +1,7 @@
-// postcss config - nothing crazy just the basics
-export default {
+// postcss config - commonjs style
+module.exports = {
   plugins: {
     tailwindcss: {},
     autoprefixer: {},
   },
 }
-
