@@ -222,19 +222,33 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                   Scan Models
                 </button>
                 
+                {/* GREY OUT if model already installed */}
                 <button 
                   onClick={downloadModel}
-                  disabled={downloading}
-                  className="btn-primary flex items-center gap-2"
+                  disabled={downloading || whisperStatus?.[local.whisperModel as keyof WhisperStatus]}
+                  className={`flex items-center gap-2 ${
+                    whisperStatus?.[local.whisperModel as keyof WhisperStatus]
+                      ? 'btn-secondary opacity-50 cursor-not-allowed'
+                      : 'btn-primary'
+                  }`}
                 >
-                  {downloading ? (
-                    <span className="animate-pulse">...</span>
+                  {whisperStatus?.[local.whisperModel as keyof WhisperStatus] ? (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      {local.whisperModel} Installed
+                    </>
+                  ) : downloading ? (
+                    <span className="animate-pulse">Downloading...</span>
                   ) : (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Download {local.whisperModel}
+                    </>
                   )}
-                  Download {local.whisperModel}
                 </button>
               </div>
 
@@ -488,6 +502,95 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 Revert Deleted Videos
                 <span className="text-xs">(shows preview first)</span>
               </button>
+            </div>
+          </section>
+
+          {/* ADVANCED SETTINGS - 5 more options */}
+          <section>
+            <SectionHeader title="Advanced Settings" />
+            
+            <div className="mt-4 space-y-4">
+              {/* transition duration */}
+              <div>
+                <label className="text-sm text-da-text-muted mb-2 block">
+                  Transition Duration: {local.transitionDuration || 0.5}s
+                </label>
+                <input
+                  type="range"
+                  min="0.2"
+                  max="1.5"
+                  step="0.1"
+                  value={local.transitionDuration || 0.5}
+                  onChange={e => handleChange('transitionDuration', parseFloat(e.target.value))}
+                  className="w-full accent-da-pink"
+                />
+              </div>
+
+              {/* max concurrent scrapers */}
+              <div>
+                <label className="text-sm text-da-text-muted mb-2 block">Max Keywords to Search</label>
+                <input
+                  type="number"
+                  min="3"
+                  max="20"
+                  value={local.maxKeywords || 10}
+                  onChange={e => handleChange('maxKeywords', parseInt(e.target.value))}
+                  className="input-field w-32"
+                />
+                <span className="text-xs text-da-text-muted ml-2">More = more images, but slower</span>
+              </div>
+
+              {/* auto-cleanup old jobs */}
+              <div className="p-4 bg-da-medium rounded-lg">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={local.autoCleanup || false}
+                    onChange={e => handleChange('autoCleanup', e.target.checked)}
+                    className="w-5 h-5 rounded accent-da-pink"
+                  />
+                  <div>
+                    <div className="font-medium">Auto-cleanup temp files</div>
+                    <div className="text-xs text-da-text-muted">
+                      Removes intermediate files after job completes
+                    </div>
+                  </div>
+                </label>
+              </div>
+
+              {/* prefer static images */}
+              <div className="p-4 bg-da-medium rounded-lg">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={local.preferStatic || false}
+                    onChange={e => handleChange('preferStatic', e.target.checked)}
+                    className="w-5 h-5 rounded accent-da-pink"
+                  />
+                  <div>
+                    <div className="font-medium">Prefer static images (no Ken Burns)</div>
+                    <div className="text-xs text-da-text-muted">
+                      Disables zoom/pan motion for cleaner look
+                    </div>
+                  </div>
+                </label>
+              </div>
+
+              {/* CPU throttle */}
+              <div>
+                <label className="text-sm text-da-text-muted mb-2 block">
+                  CPU Throttle Level: {local.cpuThrottle || 'normal'}
+                </label>
+                <select
+                  value={local.cpuThrottle || 'normal'}
+                  onChange={e => handleChange('cpuThrottle', e.target.value)}
+                  className="input-field w-full"
+                >
+                  <option value="aggressive">Aggressive (faster, high CPU)</option>
+                  <option value="normal">Normal (balanced)</option>
+                  <option value="gentle">Gentle (slower, low CPU)</option>
+                </select>
+              </div>
             </div>
           </section>
 

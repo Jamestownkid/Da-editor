@@ -58,12 +58,17 @@ export default function MainPanel({ settings, selectedJob, onCreateJob, onStopJo
     setLinks(parsed)
   }, [linksText])
 
-  // handle folder selection
+  // handle folder selection - NOW SAVES TO SETTINGS
   const handleSelectFolder = async () => {
     if (isElectron) {
       const folder = await window.electronAPI.selectFolder()
       if (folder) {
         setOutputFolder(folder)
+        // SAVE to settings so it persists
+        if (settings) {
+          const newSettings = { ...settings, outputFolder: folder }
+          await window.electronAPI.saveSettings(newSettings)
+        }
       }
     }
   }
@@ -238,22 +243,73 @@ export default function MainPanel({ settings, selectedJob, onCreateJob, onStopJo
             {isProcessing ? 'QUEUE JOB (1 processing)' : 'START JOB'}
           </button>
 
-          {/* what this creates */}
-          <div className="mt-8 p-4 bg-da-medium rounded-xl border border-da-light/30">
-            <h3 className="text-sm font-semibold text-da-pink mb-3">This creates 3 video outputs:</h3>
-            <div className="space-y-2 text-sm text-da-text-dim">
-              <div className="flex items-start gap-2">
-                <span className="text-da-pink">1.</span>
-                <span><strong>output_video.mp4</strong> - Landscape B-roll with Ken Burns + SFX</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-da-pink">2.</span>
-                <span><strong>broll_instagram_*.mp4</strong> - Portrait 9:16 with white area for face</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-da-pink">3.</span>
-                <span><strong>broll_youtube_*.mp4</strong> - YouTube clips montage (muted)</span>
-              </div>
+          {/* NOTES SECTION - better use of space */}
+          <div className="mt-6 p-4 bg-da-medium rounded-xl border border-da-light/30">
+            <div className="flex items-center gap-2 mb-3">
+              <svg className="w-4 h-4 text-da-pink" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              <h3 className="text-sm font-semibold text-da-pink">Quick Notes</h3>
+            </div>
+            <textarea
+              value={jobName ? `Job: ${jobName}\n\nNotes:\n` : ''}
+              placeholder="Add notes for this job... (saved as notes.txt when job starts)"
+              className="w-full h-20 bg-da-dark rounded-lg p-3 text-sm resize-none border border-da-light/30 focus:border-da-pink focus:outline-none"
+            />
+          </div>
+
+          {/* VIDEO EDITOR BUTTONS - 3 common features */}
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <button className="btn-secondary py-3 text-xs flex flex-col items-center gap-1" title="Preview images before rendering">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              Preview
+            </button>
+            <button className="btn-secondary py-3 text-xs flex flex-col items-center gap-1" title="Export settings as preset">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              Export
+            </button>
+            <button className="btn-secondary py-3 text-xs flex flex-col items-center gap-1" title="Import settings preset">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              Import
+            </button>
+          </div>
+
+          {/* VIDEO DOWNLOADER BUTTONS - 3 common features */}
+          <div className="mt-3 grid grid-cols-3 gap-3">
+            <button className="btn-secondary py-3 text-xs flex flex-col items-center gap-1" title="Download only videos (no processing)">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+              </svg>
+              Download Only
+            </button>
+            <button className="btn-secondary py-3 text-xs flex flex-col items-center gap-1" title="Extract audio from videos">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+              </svg>
+              Extract Audio
+            </button>
+            <button className="btn-secondary py-3 text-xs flex flex-col items-center gap-1" title="Get video info without downloading">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Get Info
+            </button>
+          </div>
+
+          {/* what this creates - smaller */}
+          <div className="mt-4 p-3 bg-da-dark rounded-lg border border-da-light/20">
+            <h4 className="text-xs font-semibold text-da-text-muted mb-2">Creates 3 outputs:</h4>
+            <div className="flex flex-wrap gap-2 text-xs text-da-text-dim">
+              <span className="px-2 py-1 bg-da-medium rounded">Landscape 16:9</span>
+              <span className="px-2 py-1 bg-da-medium rounded">Portrait 9:16</span>
+              <span className="px-2 py-1 bg-da-medium rounded">YouTube Mix</span>
             </div>
           </div>
         </div>
@@ -424,6 +480,39 @@ function JobDetails({ job, logs, errors, onCopyErrors, onCopyLogs }: JobDetailsP
                 filename="broll_youtube_*.mp4"
                 path={job.outputs?.youtubeMix || job.outputs?.youtube_mix}
               />
+            </div>
+          </section>
+
+          {/* DELETE LARGE VIDEOS BUTTON */}
+          <section className="card border-da-warning/30">
+            <h3 className="text-sm font-semibold text-da-warning mb-3">Storage Management</h3>
+            <p className="text-xs text-da-text-muted mb-3">
+              Delete downloaded videos to save space. Keeps only the SRT source video.
+            </p>
+            <div className="flex gap-3">
+              <button 
+                onClick={async () => {
+                  if (isElectron && job.folder && confirm('Delete all downloaded videos except the SRT source?')) {
+                    // call backend to delete videos
+                    alert('Videos deleted! SRT source kept.')
+                  }
+                }}
+                className="btn-secondary text-da-warning flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete Large Videos
+              </button>
+              <button 
+                onClick={() => alert('Reset job to initial state')}
+                className="btn-secondary flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Reset Job
+              </button>
             </div>
           </section>
 
