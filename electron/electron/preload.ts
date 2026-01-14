@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createJobFolder: (root: string, name: string) => ipcRenderer.invoke('create-job-folder', root, name),
   saveJob: (folder: string, data: any) => ipcRenderer.invoke('save-job', folder, data),
   readJob: (folder: string) => ipcRenderer.invoke('read-job', folder),
+  deleteFolder: (folder: string) => ipcRenderer.invoke('delete-folder', folder),
   
   // job execution
   runJob: (folder: string, settings: any) => ipcRenderer.invoke('run-job', folder, settings),

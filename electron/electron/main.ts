@@ -246,6 +246,20 @@ ipcMain.handle('read-job', async (_, jobFolder) => {
   return null
 })
 
+// DELETE JOB FOLDER - removes entire job directory
+ipcMain.handle('delete-folder', async (_, folderPath) => {
+  try {
+    if (fs.existsSync(folderPath)) {
+      fs.rmSync(folderPath, { recursive: true, force: true })
+      return true
+    }
+    return false
+  } catch (e) {
+    console.error('failed to delete folder:', e)
+    return false
+  }
+})
+
 // ============================================
 // SYSTEM CHECKS - FIXED
 // ============================================

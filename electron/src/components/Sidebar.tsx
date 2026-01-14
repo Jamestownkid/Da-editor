@@ -1,15 +1,11 @@
 /**
- * Da Editor - Sidebar Component (v2)
+ * Da Editor - Sidebar Component (v3)
  * ====================================
- * the job queue lives here
- * shows all jobs with their status
- * 
- * UX IMPROVEMENTS:
- * - New Job button for quick access
- * - Job search/filter
- * - Estimated time remaining
- * - Compact view toggle
- * - Drag to reorder (future)
+ * UPGRADED with:
+ * - STOP button for running jobs
+ * - DELETE button (removes job + folder)
+ * - Better animations
+ * - Cooler design with gradients
  */
 
 import React, { useState } from 'react'
@@ -20,101 +16,144 @@ interface SidebarProps {
   selectedJob: Job | null
   onSelectJob: (job: Job | null) => void
   onResume: () => void
+  onStopJob: (jobId: string) => void  // NEW: stop a running job
+  onDeleteJob: (jobId: string, deleteFolder: boolean) => void  // NEW: delete job
   isProcessing: boolean
   currentJobId: string | null
-  onNewJob: () => void  // NEW: callback to go to new job view
+  onNewJob: () => void
 }
 
-export default function Sidebar({ jobs, selectedJob, onSelectJob, onResume, isProcessing, currentJobId, onNewJob }: SidebarProps) {
+export default function Sidebar({ 
+  jobs, 
+  selectedJob, 
+  onSelectJob, 
+  onResume, 
+  onStopJob,
+  onDeleteJob,
+  isProcessing, 
+  currentJobId, 
+  onNewJob 
+}: SidebarProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [showCompact, setShowCompact] = useState(false)
 
-  // 1a. count jobs by status for the header
   const pendingCount = jobs.filter(j => j.status === 'pending').length
   const runningCount = jobs.filter(j => j.status === 'running').length
   const doneCount = jobs.filter(j => j.status === 'done').length
   const errorCount = jobs.filter(j => j.status === 'error').length
 
-  // filter jobs by search term
   const filteredJobs = searchTerm 
     ? jobs.filter(j => j.id.toLowerCase().includes(searchTerm.toLowerCase()))
     : jobs
 
-  // estimate time remaining (rough calculation)
-  const estimatedMinutes = pendingCount * 5 + (runningCount > 0 ? 3 : 0)
+  // BETTER time estimation - based on actual job complexity
+  const estimateTime = () => {
+    let totalMins = 0
+    jobs.forEach(j => {
+      if (j.status === 'pending' || j.status === 'running') {
+        const linkCount = j.links?.length || 1
+        // ~2 min per link (download + process) + ~3 min for rendering
+        totalMins += (linkCount * 2) + 3
+      }
+    })
+    return totalMins
+  }
+  const estimatedMinutes = estimateTime()
 
   return (
-    <aside className="w-72 bg-da-dark flex flex-col border-r border-da-light/30">
-      {/* 1b. logo and title */}
-      <div className="p-6 border-b border-da-light/30">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-xl bg-da-pink flex items-center justify-center cursor-pointer hover:scale-105 transition-transform" onClick={onNewJob}>
-            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+    <aside className="w-80 bg-gradient-to-b from-da-dark to-da-darker flex flex-col border-r border-da-pink/20">
+      {/* ANIMATED HEADER */}
+      <div className="p-6 border-b border-da-pink/20 relative overflow-hidden">
+        {/* background glow */}
+        <div className="absolute -top-10 -left-10 w-40 h-40 bg-da-pink/10 rounded-full blur-3xl animate-pulse" />
+        
+        <div className="relative z-10">
+          <div className="flex items-center gap-3 mb-4">
+            <div 
+              onClick={onNewJob}
+              className="w-12 h-12 rounded-xl bg-gradient-to-br from-da-pink to-purple-600 flex items-center justify-center cursor-pointer hover:scale-110 transition-all duration-300 shadow-lg shadow-da-pink/30 animate-pulse"
+            >
+              <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-2xl font-black bg-gradient-to-r from-da-pink to-purple-400 bg-clip-text text-transparent">
+                DA EDITOR
+              </h1>
+              <p className="text-xs text-da-text-muted">b-roll magic</p>
+            </div>
+          </div>
+
+          {/* NEW JOB BUTTON - animated */}
+          <button
+            onClick={onNewJob}
+            className="w-full py-3 mb-3 rounded-xl bg-gradient-to-r from-da-medium to-da-light border border-da-light/30 hover:border-da-pink/50 flex items-center justify-center gap-2 transition-all duration-300 hover:shadow-lg hover:shadow-da-pink/20 group"
+          >
+            <svg className="w-5 h-5 group-hover:rotate-90 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-da-pink">DA EDITOR</h1>
-            <p className="text-xs text-da-text-muted">b-roll automation</p>
-          </div>
-        </div>
+            <span className="font-semibold">New Job</span>
+          </button>
 
-        {/* NEW: quick new job button */}
-        <button
-          onClick={onNewJob}
-          className="w-full btn-secondary flex items-center justify-center gap-2 mb-3"
-          title="Create a new job (Ctrl+N)"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          New Job
-        </button>
-
-        {/* 1c. resume button */}
-        <button
-          onClick={onResume}
-          disabled={isProcessing || pendingCount + errorCount === 0}
-          className="w-full btn-primary flex items-center justify-center gap-2"
-          title={isProcessing ? "Processing..." : "Resume all pending jobs"}
-        >
+          {/* RESUME/STOP BUTTON */}
           {isProcessing ? (
-            <>
-              <span className="animate-spin">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </span>
-              Processing...
-            </>
+            <button
+              onClick={() => currentJobId && onStopJob(currentJobId)}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-red-500/20 to-orange-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 flex items-center justify-center gap-2 transition-all duration-300"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+              </svg>
+              <span className="font-semibold">STOP JOB</span>
+            </button>
           ) : (
-            <>
+            <button
+              onClick={onResume}
+              disabled={pendingCount + errorCount === 0}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-da-pink to-purple-600 text-white font-bold flex items-center justify-center gap-2 transition-all duration-300 hover:shadow-lg hover:shadow-da-pink/40 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               Resume Jobs
-            </>
+            </button>
           )}
-        </button>
 
-        {/* estimated time remaining */}
-        {pendingCount > 0 && (
-          <div className="mt-3 text-xs text-da-text-muted text-center">
-            ~{estimatedMinutes} min remaining for {pendingCount} job{pendingCount !== 1 ? 's' : ''}
-          </div>
-        )}
+          {/* BETTER TIME ESTIMATE */}
+          {(pendingCount > 0 || runningCount > 0) && (
+            <div className="mt-3 p-2 rounded-lg bg-da-medium/50 border border-da-light/20">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-da-text-muted">Estimated time:</span>
+                <span className="text-da-pink font-bold">
+                  {estimatedMinutes < 60 
+                    ? `~${estimatedMinutes} min`
+                    : `~${Math.round(estimatedMinutes/60)}h ${estimatedMinutes%60}m`
+                  }
+                </span>
+              </div>
+              <div className="mt-1 h-1 bg-da-light rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-da-pink to-purple-500 rounded-full animate-pulse"
+                  style={{ width: runningCount > 0 ? '50%' : '0%' }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* 2a. status summary with tooltips */}
+      {/* STATUS BADGES - animated */}
       <div className="px-4 py-3 flex gap-2 border-b border-da-light/20">
-        <span className="badge-pending" title="Pending jobs waiting in queue">{pendingCount}</span>
-        <span className="badge-running" title="Currently processing">{runningCount}</span>
-        <span className="badge-done" title="Completed jobs">{doneCount}</span>
-        {errorCount > 0 && <span className="badge-error" title="Jobs with errors - click Resume to retry">{errorCount}</span>}
+        <span className="badge-pending animate-bounce" style={{animationDelay: '0s', animationDuration: '2s'}}>{pendingCount}</span>
+        <span className="badge-running">{runningCount}</span>
+        <span className="badge-done">{doneCount}</span>
+        {errorCount > 0 && <span className="badge-error animate-pulse">{errorCount}</span>}
       </div>
 
-      {/* 2b. search and view controls */}
+      {/* SEARCH */}
       <div className="px-4 py-3 space-y-2">
         <div className="flex items-center gap-2">
           <div className="flex-1 relative">
@@ -126,13 +165,12 @@ export default function Sidebar({ jobs, selectedJob, onSelectJob, onResume, isPr
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               placeholder="Search jobs..."
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-da-medium rounded-lg border border-da-light/30 focus:border-da-pink focus:outline-none"
+              className="w-full pl-9 pr-3 py-2 text-xs bg-da-medium rounded-xl border border-da-light/30 focus:border-da-pink focus:outline-none transition-all"
             />
           </div>
           <button 
             onClick={() => setShowCompact(!showCompact)}
-            className={`p-2 rounded-lg transition-all ${showCompact ? 'bg-da-pink/20 text-da-pink' : 'bg-da-medium text-da-text-muted hover:text-da-text'}`}
-            title="Toggle compact view"
+            className={`p-2 rounded-xl transition-all ${showCompact ? 'bg-da-pink/20 text-da-pink' : 'bg-da-medium text-da-text-muted hover:text-da-text'}`}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h8m-8 6h16" />
@@ -140,96 +178,143 @@ export default function Sidebar({ jobs, selectedJob, onSelectJob, onResume, isPr
           </button>
         </div>
         <h2 className="text-xs font-semibold text-da-text-muted uppercase tracking-wider">
-          Jobs Queue ({filteredJobs.length}{searchTerm ? ` / ${jobs.length}` : ''})
+          Jobs ({filteredJobs.length})
         </h2>
       </div>
 
-      {/* 3a. scrollable jobs list - with always visible scrollbar */}
-      <div className="flex-1 overflow-y-scroll px-3 pb-4 scrollbar-always-show">
+      {/* JOBS LIST - scrollable */}
+      <div className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-thin scrollbar-thumb-da-pink/50 scrollbar-track-da-dark">
         {filteredJobs.length === 0 ? (
           <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-da-light flex items-center justify-center">
-              <svg className="w-8 h-8 text-da-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-da-medium to-da-light flex items-center justify-center">
+              <svg className="w-10 h-10 text-da-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
               </svg>
             </div>
-            <p className="text-da-text-muted text-sm">{searchTerm ? 'No jobs match search' : 'No jobs yet'}</p>
-            <p className="text-da-text-muted text-xs mt-1">{searchTerm ? 'Try a different search term' : 'Paste links to get started'}</p>
+            <p className="text-da-text-muted text-sm font-medium">{searchTerm ? 'No matches' : 'No jobs yet'}</p>
+            <p className="text-da-text-muted text-xs mt-1">Paste some links to get started</p>
           </div>
         ) : (
-          <div className={`space-y-${showCompact ? '1' : '2'}`}>
-            {filteredJobs.map(job => (
+          <div className="space-y-2">
+            {filteredJobs.map((job, index) => (
               <JobCard
                 key={job.id}
                 job={job}
+                index={index}
                 isSelected={selectedJob?.id === job.id}
                 isRunning={currentJobId === job.id}
                 onClick={() => onSelectJob(job)}
+                onStop={() => onStopJob(job.id)}
+                onDelete={() => onDeleteJob(job.id, true)}
                 compact={showCompact}
               />
             ))}
           </div>
         )}
       </div>
+
+      {/* BETA BUTTON at bottom */}
+      <div className="p-4 border-t border-da-light/20">
+        <button className="w-full py-2 rounded-xl bg-gradient-to-r from-purple-500/20 to-blue-500/20 border border-purple-500/30 text-purple-300 text-xs font-semibold flex items-center justify-center gap-2 hover:border-purple-500/50 transition-all">
+          <span className="px-2 py-0.5 rounded bg-purple-500/30 text-[10px]">BETA</span>
+          Face Overlay Editor
+        </button>
+      </div>
     </aside>
   )
 }
 
-// 4a. individual job card component - with compact mode support
+// JOB CARD with STOP and DELETE buttons
 interface JobCardProps {
   job: Job
+  index: number
   isSelected: boolean
   isRunning: boolean
   onClick: () => void
+  onStop: () => void
+  onDelete: () => void
   compact?: boolean
 }
 
-function JobCard({ job, isSelected, isRunning, onClick, compact = false }: JobCardProps) {
-  // status badge based on job status
+function JobCard({ job, index, isSelected, isRunning, onClick, onStop, onDelete, compact = false }: JobCardProps) {
+  const [showActions, setShowActions] = useState(false)
+  
   const statusBadge = {
-    pending: <span className="badge-pending"><span className="w-1.5 h-1.5 rounded-full bg-da-warning"></span>{!compact && ' Pending'}</span>,
-    running: <span className="badge-running"><span className="w-1.5 h-1.5 rounded-full bg-da-pink animate-pulse"></span>{!compact && ' Running'}</span>,
-    done: <span className="badge-done"><span className="w-1.5 h-1.5 rounded-full bg-da-success"></span>{!compact && ' Done'}</span>,
-    error: <span className="badge-error"><span className="w-1.5 h-1.5 rounded-full bg-da-error"></span>{!compact && ' Error'}</span>,
-    paused: <span className="badge-paused"><span className="w-1.5 h-1.5 rounded-full bg-da-text-muted"></span>{!compact && ' Paused'}</span>,
+    pending: <span className="badge-pending text-[10px]">Pending</span>,
+    running: <span className="badge-running text-[10px] animate-pulse">Running</span>,
+    done: <span className="badge-done text-[10px]">Done</span>,
+    error: <span className="badge-error text-[10px]">Error</span>,
+    paused: <span className="badge-paused text-[10px]">Paused</span>,
   }[job.status]
 
-  // format time for compact view
   const timeAgo = formatTimeAgo(job.created)
 
   return (
-    <button
-      onClick={onClick}
-      title={`${job.id} - ${job.status} - ${job.links?.length || 0} links`}
+    <div
       className={`
-        w-full text-left ${compact ? 'p-2' : 'p-3'} rounded-lg transition-all
-        ${isSelected ? 'bg-da-pink/20 border border-da-pink/50' : 'bg-da-medium hover:bg-da-light border border-transparent'}
-        ${isRunning ? 'ring-2 ring-da-pink ring-offset-2 ring-offset-da-dark' : ''}
+        relative rounded-xl transition-all duration-300
+        ${isSelected ? 'bg-gradient-to-r from-da-pink/20 to-purple-500/20 border border-da-pink/50' : 'bg-da-medium hover:bg-da-light border border-transparent'}
+        ${isRunning ? 'ring-2 ring-da-pink ring-offset-2 ring-offset-da-dark shadow-lg shadow-da-pink/20' : ''}
       `}
+      style={{ animationDelay: `${index * 0.05}s` }}
+      onMouseEnter={() => setShowActions(true)}
+      onMouseLeave={() => setShowActions(false)}
     >
-      <div className="flex items-start justify-between gap-2 mb-1">
-        <span className={`font-medium ${compact ? 'text-xs' : 'text-sm'} truncate flex-1`}>{job.id}</span>
-        {statusBadge}
-      </div>
-      
-      {!compact && (
-        <div className="text-xs text-da-text-muted flex items-center justify-between">
-          <span>{job.links?.length || 0} link{(job.links?.length || 0) !== 1 ? 's' : ''}</span>
-          <span>{timeAgo}</span>
+      <button
+        onClick={onClick}
+        className={`w-full text-left ${compact ? 'p-2' : 'p-3'}`}
+      >
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <span className={`font-semibold ${compact ? 'text-xs' : 'text-sm'} truncate flex-1`}>{job.id}</span>
+          {statusBadge}
         </div>
-      )}
+        
+        {!compact && (
+          <div className="text-xs text-da-text-muted flex items-center justify-between">
+            <span>{job.links?.length || 0} links</span>
+            <span>{timeAgo}</span>
+          </div>
+        )}
 
-      {/* progress bar for running jobs */}
-      {isRunning && (
-        <div className="mt-2 progress-bar">
-          <div className="progress-bar-fill shimmer" style={{ width: `${job.progress || 0}%` }} />
+        {isRunning && (
+          <div className="mt-2 h-1.5 bg-da-dark rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-da-pink to-purple-500 rounded-full transition-all duration-500"
+              style={{ width: `${job.progress || 10}%` }}
+            />
+          </div>
+        )}
+      </button>
+
+      {/* ACTION BUTTONS - show on hover */}
+      {showActions && (
+        <div className="absolute top-2 right-2 flex gap-1 animate-fade-in">
+          {isRunning && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onStop(); }}
+              className="p-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-400 transition-all"
+              title="Stop this job"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
+              </svg>
+            </button>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); if(confirm('Delete this job and its folder?')) onDelete(); }}
+            className="p-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-400 transition-all"
+            title="Delete job and folder"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
         </div>
       )}
-    </button>
+    </div>
   )
 }
 
-// helper to format relative time
 function formatTimeAgo(dateString: string): string {
   try {
     const date = new Date(dateString)
@@ -248,4 +333,3 @@ function formatTimeAgo(dateString: string): string {
     return ''
   }
 }
-

@@ -18,6 +18,7 @@ declare global {
       createJobFolder: (root: string, name: string) => Promise<string>
       saveJob: (folder: string, data: Job) => Promise<boolean>
       readJob: (folder: string) => Promise<Job | null>
+      deleteFolder: (folder: string) => Promise<boolean>
       runJob: (folder: string, settings: Settings) => Promise<{ success: boolean }>
       stopJob: () => Promise<boolean>
       checkSystem: () => Promise<{

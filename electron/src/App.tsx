@@ -402,6 +402,47 @@ export default function App() {
     setJobs((prev: Job[]) => prev.filter((j: Job) => j.status !== 'done'))
   }
 
+  // STOP A SPECIFIC JOB by ID
+  const stopJobById = async (jobId: string) => {
+    if (isElectron && currentJobId === jobId) {
+      await window.electronAPI.stopJob()
+      setIsProcessing(false)
+      setCurrentJobId(null)
+      
+      setJobs((prev: Job[]) => prev.map((j: Job) => 
+        j.id === jobId ? { ...j, status: 'paused' as JobStatus } : j
+      ))
+    }
+  }
+
+  // DELETE A JOB - removes from list and optionally deletes folder
+  const deleteJob = async (jobId: string, deleteFolder: boolean) => {
+    // if job is running, stop it first
+    if (currentJobId === jobId) {
+      await stopJobById(jobId)
+    }
+    
+    // find job to get folder path
+    const job = jobs.find(j => j.id === jobId)
+    
+    // remove from state
+    setJobs((prev: Job[]) => prev.filter((j: Job) => j.id !== jobId))
+    
+    // deselect if selected
+    if (selectedJob?.id === jobId) {
+      setSelectedJob(null)
+    }
+    
+    // delete folder if requested
+    if (deleteFolder && job?.folder && isElectron) {
+      try {
+        await window.electronAPI.deleteFolder(job.folder)
+      } catch (e) {
+        console.error('failed to delete folder:', e)
+      }
+    }
+  }
+
   // stop all jobs - emergency stop
   const stopAllJobs = async () => {
     if (isElectron && isProcessing) {
@@ -442,6 +483,8 @@ export default function App() {
           selectedJob={selectedJob}
           onSelectJob={setSelectedJob}
           onResume={resumeJobs}
+          onStopJob={stopJobById}
+          onDeleteJob={deleteJob}
           isProcessing={isProcessing}
           currentJobId={currentJobId}
           onNewJob={goHome}
