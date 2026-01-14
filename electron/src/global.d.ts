@@ -32,6 +32,9 @@ declare global {
       checkGpu: () => Promise<{ cuda: boolean; device: string; vram: number }>
       scanWhisper: () => Promise<Record<string, boolean>>
       downloadWhisper: (model: string) => Promise<{ success: boolean; output?: string }>
+      getSystemStats: () => Promise<{ cpu: number; ram: number; disk: number }>
+      saveNotes: (folder: string, notes: string) => Promise<boolean>
+      readNotes: (folder: string) => Promise<string>
       minimizeWindow: () => Promise<void>
       maximizeWindow: () => Promise<void>
       closeWindow: () => Promise<void>

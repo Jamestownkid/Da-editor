@@ -517,6 +517,70 @@ ipcMain.handle('stop-job', async () => {
   return false
 })
 
+// GET SYSTEM STATS - for real-time monitoring during processing
+ipcMain.handle('get-system-stats', async () => {
+  return new Promise((resolve) => {
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+    const script = `
+import json
+try:
+    import psutil
+    cpu = psutil.cpu_percent(interval=0.5)
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    print(json.dumps({
+        "cpu": round(cpu),
+        "ram": round(mem.percent),
+        "disk": round(disk.percent)
+    }))
+except:
+    print(json.dumps({"cpu": 0, "ram": 0, "disk": 0}))
+`
+    const check = spawn(pythonCmd, ['-c', script])
+    
+    let output = ''
+    check.stdout?.on('data', (d) => { output += d.toString() })
+    
+    check.on('close', () => {
+      try {
+        resolve(JSON.parse(output.trim()))
+      } catch {
+        resolve({ cpu: 0, ram: 0, disk: 0 })
+      }
+    })
+    
+    check.on('error', () => {
+      resolve({ cpu: 0, ram: 0, disk: 0 })
+    })
+  })
+})
+
+// NOTES FEATURE - save notes.txt for a job
+ipcMain.handle('save-notes', async (_, jobFolder, notes) => {
+  try {
+    const notesPath = path.join(jobFolder, 'notes.txt')
+    fs.writeFileSync(notesPath, notes, 'utf-8')
+    return true
+  } catch (e) {
+    console.error('failed to save notes:', e)
+    return false
+  }
+})
+
+// NOTES FEATURE - read notes.txt for a job
+ipcMain.handle('read-notes', async (_, jobFolder) => {
+  try {
+    const notesPath = path.join(jobFolder, 'notes.txt')
+    if (fs.existsSync(notesPath)) {
+      return fs.readFileSync(notesPath, 'utf-8')
+    }
+    return ''
+  } catch (e) {
+    console.error('failed to read notes:', e)
+    return ''
+  }
+})
+
 // check system resources
 ipcMain.handle('check-system', async () => {
   return new Promise((resolve) => {

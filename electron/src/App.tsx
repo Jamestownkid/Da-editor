@@ -32,6 +32,7 @@ export default function App() {
   const [logs, setLogs] = useState<string[]>([])
   const [errors, setErrors] = useState<string[]>([])
   const [showErrorBox, setShowErrorBox] = useState(true)
+  const [systemStats, setSystemStats] = useState<{ cpu: number; ram: number; disk: number } | null>(null)
 
   // load settings on mount
   useEffect(() => {
@@ -44,6 +45,73 @@ export default function App() {
       scanForJobs()
     }
   }, [settings?.outputFolder])
+
+  // KEYBOARD SHORTCUTS - UX improvement
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+N or Cmd+N = New Job (go home)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+        e.preventDefault()
+        goHome()
+      }
+      // Ctrl+S or Cmd+S = Open Settings
+      if ((e.ctrlKey || e.metaKey) && e.key === 's' && !e.shiftKey) {
+        e.preventDefault()
+        setShowSettings(true)
+      }
+      // Escape = Close modals or deselect job
+      if (e.key === 'Escape') {
+        if (showSettings) {
+          setShowSettings(false)
+        } else if (selectedJob) {
+          setSelectedJob(null)
+        }
+      }
+      // Ctrl+R or Cmd+R = Resume jobs (if not already processing)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'r' && !isProcessing) {
+        e.preventDefault()
+        resumeJobs()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showSettings, selectedJob, isProcessing])
+
+  // poll system stats when processing - helps user know if PC is struggling
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null
+    
+    if (isProcessing && isElectron) {
+      // poll every 2 seconds
+      interval = setInterval(async () => {
+        try {
+          const stats = await window.electronAPI.getSystemStats()
+          setSystemStats(stats)
+          
+          // SAFEGUARD: warn user if resources are critical
+          if (stats.cpu > 95 || stats.ram > 95) {
+            setErrors((prev: string[]) => {
+              // only add warning once
+              const warningExists = prev.some(e => e.includes('SYSTEM OVERLOAD'))
+              if (!warningExists) {
+                return [...prev, `WARNING: SYSTEM OVERLOAD - CPU: ${stats.cpu}%, RAM: ${stats.ram}%. Consider pausing jobs.`]
+              }
+              return prev
+            })
+          }
+        } catch (e) {
+          // ignore stats errors
+        }
+      }, 2000)
+    } else {
+      setSystemStats(null)
+    }
+    
+    return () => {
+      if (interval) clearInterval(interval)
+    }
+  }, [isProcessing])
 
   // listen for job progress events
   useEffect(() => {
@@ -172,7 +240,7 @@ export default function App() {
     }
   }, [settings, jobs, isProcessing])
 
-  // process next pending job
+  // process next pending job - WITH SAFEGUARDS
   const processNextJob = async (jobList: Job[] = jobs) => {
     const pendingJob = jobList.find(j => j.status === 'pending')
     
@@ -180,6 +248,28 @@ export default function App() {
       setIsProcessing(false)
       setCurrentJobId(null)
       return
+    }
+
+    // SAFEGUARD: check system resources before starting
+    if (isElectron) {
+      try {
+        const sysCheck = await window.electronAPI.checkSystem()
+        if (!sysCheck.safe) {
+          const issues: string[] = []
+          if (sysCheck.disk !== 'OK') issues.push(`Disk: ${sysCheck.disk}`)
+          if (sysCheck.memory !== 'OK') issues.push(`Memory: ${sysCheck.memory}`)
+          if (sysCheck.cpu !== 'OK') issues.push(`CPU: ${sysCheck.cpu}`)
+          
+          setErrors((prev: string[]) => [
+            ...prev, 
+            `SYSTEM WARNING: ${issues.join(', ')}. Job may fail or crash. Free up resources before continuing.`
+          ])
+          
+          // still proceed but user is warned
+        }
+      } catch (e) {
+        // ignore check failure, proceed anyway
+      }
     }
 
     setIsProcessing(true)
@@ -302,6 +392,32 @@ export default function App() {
     }
   }
 
+  // GO HOME - deselect job and show new job form
+  const goHome = () => {
+    setSelectedJob(null)
+  }
+
+  // clear completed jobs from UI (doesn't delete from disk)
+  const clearCompletedJobs = () => {
+    setJobs((prev: Job[]) => prev.filter((j: Job) => j.status !== 'done'))
+  }
+
+  // stop all jobs - emergency stop
+  const stopAllJobs = async () => {
+    if (isElectron && isProcessing) {
+      await window.electronAPI.stopJob()
+      setIsProcessing(false)
+      setCurrentJobId(null)
+      
+      // pause all pending/running jobs
+      setJobs((prev: Job[]) => prev.map((j: Job) => 
+        j.status === 'pending' || j.status === 'running' 
+          ? { ...j, status: 'paused' as JobStatus } 
+          : j
+      ))
+    }
+  }
+
   return (
     <div className="h-screen flex flex-col bg-da-darker overflow-hidden">
       <TopBar 
@@ -314,6 +430,10 @@ export default function App() {
             window.electronAPI.openFolder(settings.outputFolder)
           }
         }}
+        onGoHome={goHome}
+        onClearCompleted={clearCompletedJobs}
+        onStopAllJobs={stopAllJobs}
+        systemStats={systemStats}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -324,6 +444,7 @@ export default function App() {
           onResume={resumeJobs}
           isProcessing={isProcessing}
           currentJobId={currentJobId}
+          onNewJob={goHome}
         />
 
         <MainPanel

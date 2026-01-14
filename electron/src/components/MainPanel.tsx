@@ -316,7 +316,7 @@ function ProcessingAnimation() {
   )
 }
 
-// job details component
+// job details component with NOTES feature
 interface JobDetailsProps {
   job: Job
   logs: string[]
@@ -326,6 +326,25 @@ interface JobDetailsProps {
 }
 
 function JobDetails({ job, logs, errors, onCopyErrors, onCopyLogs }: JobDetailsProps) {
+  const [notes, setNotes] = useState('')
+  const [notesSaved, setNotesSaved] = useState(false)
+
+  // load notes when job changes
+  useEffect(() => {
+    if (isElectron && job.folder) {
+      window.electronAPI.readNotes(job.folder).then(setNotes)
+    }
+  }, [job.folder])
+
+  // save notes to disk
+  const handleSaveNotes = async () => {
+    if (isElectron && job.folder) {
+      await window.electronAPI.saveNotes(job.folder, notes)
+      setNotesSaved(true)
+      setTimeout(() => setNotesSaved(false), 2000)
+    }
+  }
+
   return (
     <main className="flex-1 flex flex-col bg-da-darker overflow-hidden">
       {/* job header */}
@@ -341,9 +360,33 @@ function JobDetails({ job, logs, errors, onCopyErrors, onCopyLogs }: JobDetailsP
         </div>
       </div>
 
-      {/* job content */}
-      <div className="flex-1 overflow-auto p-6">
+      {/* job content - with always visible scrollbar */}
+      <div className="flex-1 overflow-y-scroll p-6 scrollbar-always-show">
         <div className="max-w-3xl mx-auto space-y-6">
+          {/* NOTES SECTION - new feature */}
+          <section className="card border-da-pink/30">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-da-pink flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Notes
+              </h3>
+              <button 
+                onClick={handleSaveNotes} 
+                className="btn-ghost text-xs text-da-pink hover:text-da-pink-hover"
+              >
+                {notesSaved ? 'Saved!' : 'Save'}
+              </button>
+            </div>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Add notes about this job... (saved to notes.txt)"
+              className="input-field h-24 resize-none text-sm"
+            />
+          </section>
+
           {/* links */}
           <section className="card">
             <h3 className="text-sm font-semibold text-da-text-muted mb-3">Links ({job.links?.length || 0})</h3>

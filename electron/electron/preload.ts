@@ -37,6 +37,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkGpu: () => ipcRenderer.invoke('check-gpu'),
   scanWhisper: () => ipcRenderer.invoke('scan-whisper'),
   downloadWhisper: (model: string) => ipcRenderer.invoke('download-whisper', model),
+  getSystemStats: () => ipcRenderer.invoke('get-system-stats'),
+  
+  // notes feature
+  saveNotes: (folder: string, notes: string) => ipcRenderer.invoke('save-notes', folder, notes),
+  readNotes: (folder: string) => ipcRenderer.invoke('read-notes', folder),
   
   // window controls
   minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
