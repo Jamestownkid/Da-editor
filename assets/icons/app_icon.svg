@@ -1,0 +1,52 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- background circle with gradient -->
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#0d0d14"/>
+    </linearGradient>
+    <linearGradient id="pinkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff6b8a"/>
+      <stop offset="100%" style="stop-color:#e94560"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- main circle background -->
+  <circle cx="256" cy="256" r="240" fill="url(#bgGrad)" stroke="url(#pinkGrad)" stroke-width="8"/>
+  
+  <!-- inner glow ring -->
+  <circle cx="256" cy="256" r="200" fill="none" stroke="#e94560" stroke-width="2" opacity="0.3"/>
+  
+  <!-- play button / video camera shape -->
+  <g filter="url(#glow)">
+    <!-- camera body -->
+    <rect x="120" y="180" width="200" height="150" rx="20" fill="url(#pinkGrad)"/>
+    
+    <!-- camera lens cone -->
+    <polygon points="320,205 400,160 400,350 320,305" fill="url(#pinkGrad)"/>
+    
+    <!-- play triangle -->
+    <polygon points="185,220 185,295 250,257" fill="#1a1a2e"/>
+  </g>
+  
+  <!-- film strip decoration -->
+  <g opacity="0.6">
+    <rect x="100" y="360" width="30" height="40" rx="4" fill="#e94560"/>
+    <rect x="145" y="360" width="30" height="40" rx="4" fill="#e94560"/>
+    <rect x="190" y="360" width="30" height="40" rx="4" fill="#e94560"/>
+    <rect x="235" y="360" width="30" height="40" rx="4" fill="#e94560"/>
+    <rect x="280" y="360" width="30" height="40" rx="4" fill="#e94560"/>
+    <rect x="325" y="360" width="30" height="40" rx="4" fill="#e94560"/>
+    <rect x="370" y="360" width="30" height="40" rx="4" fill="#e94560"/>
+  </g>
+  
+  <!-- "DA" text -->
+  <text x="256" y="145" font-family="Arial Black, sans-serif" font-size="60" font-weight="900" fill="url(#pinkGrad)" text-anchor="middle">DA</text>
+</svg>

@@ -1,0 +1,54 @@
+# Da Editor - Python Dependencies
+# ================================
+# run: pip install -r requirements.txt
+# 
+# we got a lot of stuff here but its all necessary fr
+
+# 1a. GUI framework (legacy - now using electron)
+customtkinter>=5.2.0
+
+# 1b. video downloading - the real mvp
+yt-dlp>=2024.1.0
+
+# 1c. video editing with moviepy (backup)
+moviepy>=2.0.0
+
+# 1d. image processing
+Pillow>=10.0.0
+
+# 1e. audio processing
+pydub>=0.25.0
+
+# 2a. web requests
+requests>=2.31.0
+
+# 2b. browser automation - playwright primary
+playwright>=1.40.0
+
+# 2c. puppeteer fallback (python port)
+pyppeteer>=1.0.0
+
+# 3a. transcription - whisper models
+openai-whisper>=20231117
+# or use faster-whisper for better performance:
+# faster-whisper>=0.10.0
+
+# 3b. NLP for keyword extraction
+spacy>=3.7.0
+
+# 4a. GPU support (optional but recommended)
+torch>=2.1.0
+# for nvidia cuda support:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# 4b. system monitoring
+psutil>=5.9.0
+
+# 5a. image hashing for dedupe
+imagehash>=4.3.1
+
+# 5b. array operations
+numpy>=1.24.0
+
+# 5c. progress bars (optional)
+tqdm>=4.66.0

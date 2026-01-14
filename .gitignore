@@ -1,0 +1,73 @@
+# Da Editor - Git Ignore
+# =======================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node/Electron
+node_modules/
+electron/node_modules/
+electron/dist/
+electron/release/
+*.log
+npm-debug.log*
+.npm
+.eslintcache
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Test outputs
+_test_job/
+test_output/
+*.test.*
+
+# App outputs (these should be in user folders, not repo)
+DaEditor_Output/
+output/
+renders/
+downloads/
+
+# Whisper models (too big for git)
+*.pt
+*.bin
+.cache/
+
+# Temp files
+*.tmp
+*.temp
+*.bak
+.temp/
+
+# Settings (user-specific)
+settings.json
+
+# Logs
+logs/
+*.log
