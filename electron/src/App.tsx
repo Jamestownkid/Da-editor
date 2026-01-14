@@ -5,13 +5,14 @@
  * with per-link SRT/IMG toggles
  */
 
-import React, { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Sidebar from './components/Sidebar'
 import MainPanel from './components/MainPanel'
 import TopBar from './components/TopBar'
 import SettingsModal from './components/SettingsModal'
 import Confetti from './components/Confetti'
 import { Job, Settings, JobStatus, LinkItem } from './types'
+import './global.d.ts'
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI
 
@@ -43,10 +44,10 @@ export default function App() {
   useEffect(() => {
     if (isElectron) {
       window.electronAPI.onJobProgress((msg: string) => {
-        setLogs(prev => [...prev.slice(-100), msg])
+        setLogs((prev: string[]) => [...prev.slice(-100), msg])
       })
       window.electronAPI.onJobError((msg: string) => {
-        setErrors(prev => [...prev.slice(-50), msg])
+        setErrors((prev: string[]) => [...prev.slice(-50), msg])
       })
 
       return () => {
@@ -102,7 +103,7 @@ export default function App() {
   // create a new job with per-link toggles
   const createJob = useCallback(async (links: LinkItem[], jobName: string) => {
     if (!settings?.outputFolder) {
-      setErrors(prev => [...prev, 'set an output folder first in settings yo'])
+      setErrors((prev: string[]) => [...prev, 'set an output folder first in settings yo'])
       return
     }
 
@@ -147,7 +148,7 @@ export default function App() {
     }
 
     // add to state
-    setJobs(prev => [...prev, job])
+    setJobs((prev: Job[]) => [...prev, job])
 
     // show confetti
     setShowConfetti(true)
@@ -184,14 +185,14 @@ export default function App() {
     }
 
     try {
-      if (isElectron) {
+      if (isElectron && settings) {
         await window.electronAPI.runJob(pendingJob.folder!, pendingJob.settings || settings)
-      } else {
+      } else if (!isElectron) {
         await new Promise(resolve => setTimeout(resolve, 3000))
       }
 
       // mark as done
-      setJobs(prev => prev.map(j => 
+      setJobs((prev: Job[]) => prev.map((j: Job) => 
         j.id === pendingJob.id ? { ...j, status: 'done' as JobStatus, progress: 100 } : j
       ))
 
@@ -199,9 +200,9 @@ export default function App() {
         await window.electronAPI.saveJob(pendingJob.folder, { ...pendingJob, status: 'done', progress: 100 })
       }
 
-    } catch (err: any) {
-      const errorMsg = err.message || 'unknown error'
-      setJobs(prev => prev.map(j => 
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'unknown error'
+      setJobs((prev: Job[]) => prev.map((j: Job) => 
         j.id === pendingJob.id ? { ...j, status: 'error' as JobStatus, errors: [...j.errors, errorMsg] } : j
       ))
 
@@ -220,9 +221,9 @@ export default function App() {
 
   // resume jobs
   const resumeJobs = () => {
-    const pending = jobs.filter(j => j.status === 'pending' || j.status === 'paused' || j.status === 'error')
+    const pending = jobs.filter((j: Job) => j.status === 'pending' || j.status === 'paused' || j.status === 'error')
     if (pending.length > 0 && !isProcessing) {
-      const reset = jobs.map(j => 
+      const reset = jobs.map((j: Job) => 
         j.status === 'error' || j.status === 'paused' ? { ...j, status: 'pending' as JobStatus } : j
       )
       setJobs(reset)
@@ -237,7 +238,7 @@ export default function App() {
       setIsProcessing(false)
       
       if (currentJobId) {
-        setJobs(prev => prev.map(j => 
+        setJobs((prev: Job[]) => prev.map((j: Job) => 
           j.id === currentJobId ? { ...j, status: 'paused' as JobStatus } : j
         ))
       }

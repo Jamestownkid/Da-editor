@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Da Editor - Job Runner (v2)
+Da Editor - Job Runner (v3)
 ============================
-this the upgraded version that matches the expected output structure
 runs the whole pipeline from download to render
+now with proper manifest for cross-job deduplication
 
 handles per-link SRT and image toggles like the real deal
 """
@@ -14,7 +14,6 @@ import json
 import argparse
 import time
 import traceback
-import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -65,32 +64,37 @@ class JobRunner:
         # load existing job data
         self.job = self._load_job()
         
-        # create folder structure matching sample
-        # videos go directly in job folder (downloads)
-        # images in images/ subfolder
-        # outputs: broll_instagram, broll_youtube, output_video
+        # folder structure
         self.images_dir = os.path.join(job_folder, "images")
         os.makedirs(self.images_dir, exist_ok=True)
         
         # image manifest for deduplication (rules 87-90)
+        # this is both local (job) and global (output folder) scoped
         self.image_manifest_path = os.path.join(job_folder, "image_manifest.json")
-        self.image_manifest = self._load_image_manifest()
+        
+        # global manifest in output root for cross-job deduplication
+        output_folder = settings.get("outputFolder", "")
+        self.global_manifest_path = os.path.join(output_folder, "global_image_manifest.json") if output_folder else None
         
         # safety monitor
         self.monitor = SafetyMonitor()
         
-        log(f"job runner v2 initialized: {job_folder}")
+        log(f"job runner v3 initialized: {job_folder}")
     
     def _load_job(self) -> dict:
         """load job data from json"""
         if os.path.exists(self.job_json_path):
-            with open(self.job_json_path, "r") as f:
-                return json.load(f)
-        return {"urls": [], "status": "pending"}
+            try:
+                with open(self.job_json_path, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                error(f"failed to load job.json: {e}")
+        return {"urls": [], "status": "pending", "created": datetime.now().isoformat()}
     
     def _save_job(self):
         """save current job state"""
         self.job["last_updated"] = datetime.now().isoformat()
+        self.job["jobFolder"] = self.job_folder  # always include folder path
         with open(self.job_json_path, "w") as f:
             json.dump(self.job, f, indent=2)
     
@@ -100,21 +104,6 @@ class JobRunner:
         with open(self.error_log_path, "a") as f:
             f.write(f"[{timestamp}] {msg}\n")
         error(msg)
-    
-    def _load_image_manifest(self) -> dict:
-        """load image manifest for deduplication (rule 88)"""
-        if os.path.exists(self.image_manifest_path):
-            try:
-                with open(self.image_manifest_path, "r") as f:
-                    return json.load(f)
-            except:
-                pass
-        return {"used_hashes": [], "used_urls": [], "images": []}
-    
-    def _save_image_manifest(self):
-        """save image manifest"""
-        with open(self.image_manifest_path, "w") as f:
-            json.dump(self.image_manifest, f, indent=2)
     
     def _save_links_txt(self):
         """save links.txt with [SRT][IMG] markers"""
@@ -144,6 +133,10 @@ class JobRunner:
             # save links.txt
             self._save_links_txt()
             
+            # mark as running
+            self.job["status"] = "running"
+            self._save_job()
+            
             # step 1: download all videos
             log("step 1: downloading videos...")
             self._download_videos()
@@ -157,12 +150,16 @@ class JobRunner:
             keywords = self._extract_keywords()
             
             # step 4: scrape images in background (rules 8, 91-92)
-            log("step 4: scraping images (background)...")
+            log("step 4: scraping images...")
             self._scrape_images(keywords)
             
             # step 5: create video outputs
             log("step 5: creating video outputs...")
             self._create_outputs()
+            
+            # step 6: validate outputs (rule 20)
+            log("step 6: validating outputs...")
+            self._validate_outputs()
             
             # mark as done
             self.job["status"] = "done"
@@ -180,7 +177,7 @@ class JobRunner:
     def _download_videos(self):
         """download all videos from urls"""
         downloader = VideoDownloader(
-            output_dir=self.job_folder,  # download directly to job folder
+            output_dir=self.job_folder,
             on_progress=log
         )
         
@@ -246,7 +243,7 @@ class JobRunner:
         transcriber = WhisperTranscriber(
             model_name=model,
             use_gpu=use_gpu,
-            output_dir=self.job_folder  # SRT goes in job folder root
+            output_dir=self.job_folder
         )
         
         for url_data in srt_urls:
@@ -312,12 +309,9 @@ class JobRunner:
             output_dir=self.images_dir,
             min_width=900,  # rule 115
             min_height=700,
-            min_size_kb=50
+            min_size_kb=50,
+            manifest_path=self.global_manifest_path  # cross-job deduplication
         )
-        
-        # pass existing manifest hashes to scraper for deduplication
-        scraper.used_hashes = set(self.image_manifest.get("used_hashes", []))
-        scraper.used_urls = set(self.image_manifest.get("used_urls", []))
         
         min_images = self.settings.get("minImages", 12)
         images = []
@@ -334,7 +328,7 @@ class JobRunner:
             # check cpu before each search (rule 65)
             status = self.monitor.check()
             if status.get("cpu") == "HIGH":
-                log("cpu high, waiting...")
+                log("cpu high, waiting 5s...")
                 time.sleep(5.0)
             
             try:
@@ -343,11 +337,8 @@ class JobRunner:
             except Exception as e:
                 self._log_error(f"scrape failed for '{keyword}': {e}")
         
-        # update manifest (rule 88)
-        self.image_manifest["used_hashes"] = list(scraper.used_hashes)
-        self.image_manifest["used_urls"] = list(scraper.used_urls)
-        self.image_manifest["images"] = images
-        self._save_image_manifest()
+        # save manifest
+        scraper.save_manifest()
         
         self.job["images"] = images
         self._save_job()
@@ -381,7 +372,7 @@ class JobRunner:
         creator = VideoCreatorPro(
             images_dir=self.images_dir,
             videos_dir=self.job_folder,
-            output_dir=self.job_folder,  # outputs go in job folder root
+            output_dir=self.job_folder,
             sounds_dir=sounds_dir,
             settings={
                 **self.settings,
@@ -390,27 +381,29 @@ class JobRunner:
         )
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        outputs = {}
         
         # output 1: landscape b-roll (output_video.mp4)
         log("creating output_video.mp4 (landscape b-roll)...")
         try:
             output1 = creator.create_slideshow(images, "output_video.mp4")
             if output1:
-                self.job["outputs"] = self.job.get("outputs", {})
-                self.job["outputs"]["landscape"] = output1
+                outputs["landscape"] = output1
                 log(f"  done: output_video.mp4")
         except Exception as e:
             self._log_error(f"landscape b-roll failed: {e}")
+            traceback.print_exc(file=sys.stderr)
         
         # output 2: portrait/instagram (broll_instagram_*.mp4)
         log("creating broll_instagram (portrait)...")
         try:
             output2 = creator.create_portrait(images, f"broll_instagram_{timestamp}.mp4")
             if output2:
-                self.job["outputs"]["portrait"] = output2
+                outputs["portrait"] = output2
                 log(f"  done: broll_instagram_{timestamp}.mp4")
         except Exception as e:
             self._log_error(f"portrait failed: {e}")
+            traceback.print_exc(file=sys.stderr)
         
         # output 3: youtube mix (broll_youtube_*.mp4) - only youtube videos
         youtube_vids = [
@@ -424,12 +417,59 @@ class JobRunner:
             try:
                 output3 = creator.create_youtube_mix(youtube_vids, f"broll_youtube_{timestamp}.mp4")
                 if output3:
-                    self.job["outputs"]["youtube_mix"] = output3
+                    outputs["youtube_mix"] = output3
                     log(f"  done: broll_youtube_{timestamp}.mp4")
             except Exception as e:
                 self._log_error(f"youtube mix failed: {e}")
+                traceback.print_exc(file=sys.stderr)
+        else:
+            log("no youtube videos for output #3 (youtube mix)")
         
+        self.job["outputs"] = outputs
         self._save_job()
+    
+    def _validate_outputs(self):
+        """validate that outputs are actually playable (rule 20)"""
+        outputs = self.job.get("outputs", {})
+        valid = {}
+        
+        for name, path in outputs.items():
+            if not path or not os.path.exists(path):
+                log(f"  {name}: missing")
+                continue
+            
+            size = os.path.getsize(path)
+            if size < 10000:
+                log(f"  {name}: too small ({size} bytes)")
+                continue
+            
+            # check with ffprobe
+            try:
+                import subprocess
+                result = subprocess.run([
+                    "ffprobe", "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=codec_name,duration",
+                    "-of", "json",
+                    path
+                ], capture_output=True, text=True, timeout=30)
+                
+                if result.returncode == 0:
+                    info = json.loads(result.stdout)
+                    if info.get("streams"):
+                        valid[name] = path
+                        size_mb = size / (1024 * 1024)
+                        log(f"  {name}: OK ({size_mb:.1f}MB)")
+                        continue
+            except Exception as e:
+                pass
+            
+            log(f"  {name}: validation failed")
+        
+        self.job["valid_outputs"] = valid
+        self._save_job()
+        
+        log(f"validated {len(valid)}/{len(outputs)} outputs")
     
     def _get_srt_duration(self) -> float:
         """get duration from SRT file for output matching (rule 35)"""
@@ -489,7 +529,7 @@ class JobRunner:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Da Editor Job Runner v2")
+    parser = argparse.ArgumentParser(description="Da Editor Job Runner v3")
     parser.add_argument("--job-folder", required=True, help="Path to job folder")
     parser.add_argument("--settings", required=True, help="JSON string of settings")
     

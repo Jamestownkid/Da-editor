@@ -1,13 +1,14 @@
 /**
- * Da Editor - Settings Modal (v2)
+ * Da Editor - Settings Modal (v3)
  * =================================
  * full whisper management with scan/download/set (rules 27-32)
  * gpu check (rule 32)
+ * ffmpeg check (critical)
  * delete after use (rule 69)
  * revert deleted videos (rules 71-72)
  */
 
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Settings, WhisperStatus } from '../types'
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI
@@ -18,54 +19,90 @@ interface SettingsModalProps {
   onClose: () => void
 }
 
+interface GpuInfo {
+  cuda: boolean
+  device: string
+  vram: number
+}
+
+interface FfmpegStatus {
+  ffmpeg: boolean
+  ffprobe: boolean
+  message: string
+}
+
 export default function SettingsModal({ settings, onSave, onClose }: SettingsModalProps) {
   const [local, setLocal] = useState<Settings>({ ...settings })
   const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null)
-  const [gpuInfo, setGpuInfo] = useState<any>(null)
+  const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null)
+  const [ffmpegStatus, setFfmpegStatus] = useState<FfmpegStatus | null>(null)
   const [scanning, setScanning] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState('')
 
-  // scan whisper and gpu on mount (rules 29, 32)
+  // run all checks on mount
   useEffect(() => {
-    scanWhisper()
-    checkGpu()
+    runAllChecks()
   }, [])
+
+  const runAllChecks = async () => {
+    setScanning(true)
+    await Promise.all([
+      scanWhisper(),
+      checkGpu(),
+      checkFfmpeg()
+    ])
+    setScanning(false)
+  }
 
   // scan for installed whisper models (rule 29)
   const scanWhisper = async () => {
-    setScanning(true)
     if (isElectron) {
       const status = await window.electronAPI.scanWhisper()
-      setWhisperStatus(status)
+      setWhisperStatus(status as WhisperStatus)
     }
-    setScanning(false)
   }
 
   // check gpu availability (rule 32)
   const checkGpu = async () => {
     if (isElectron) {
-      const system = await window.electronAPI.checkSystem()
-      setGpuInfo(system?.gpu || { available: false })
+      const info = await window.electronAPI.checkGpu()
+      setGpuInfo(info)
+    }
+  }
+
+  // check ffmpeg/ffprobe (critical)
+  const checkFfmpeg = async () => {
+    if (isElectron) {
+      const status = await window.electronAPI.checkFfmpeg()
+      setFfmpegStatus(status)
     }
   }
 
   // download whisper model (rule 30)
   const downloadModel = async () => {
-    setDownloading(true)
-    setDownloadProgress(`Downloading ${local.whisperModel} model...`)
+    if (!isElectron) return
     
-    // simulate download (actual download happens via python)
-    // in real app, this would call python to download
-    setTimeout(() => {
-      setDownloadProgress('Download complete!')
-      setDownloading(false)
-      scanWhisper()
-    }, 3000)
+    setDownloading(true)
+    setDownloadProgress(`Downloading ${local.whisperModel} model... this might take a minute`)
+    
+    try {
+      const result = await window.electronAPI.downloadWhisper(local.whisperModel)
+      if (result.success) {
+        setDownloadProgress('Download complete!')
+        await scanWhisper()
+      } else {
+        setDownloadProgress('Download failed. Check your internet connection.')
+      }
+    } catch (e) {
+      setDownloadProgress('Download failed.')
+    }
+    
+    setDownloading(false)
   }
 
   // handle input changes
-  const handleChange = (key: keyof Settings, value: any) => {
+  const handleChange = (key: keyof Settings, value: string | number | boolean) => {
     setLocal(prev => ({ ...prev, [key]: value }))
   }
 
@@ -107,6 +144,19 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
 
         {/* scrollable content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
+          {/* ffmpeg status (critical) */}
+          {ffmpegStatus && (!ffmpegStatus.ffmpeg || !ffmpegStatus.ffprobe) && (
+            <div className="p-4 bg-red-500/20 border border-red-500 rounded-lg">
+              <div className="font-bold text-red-400">FFmpeg Required</div>
+              <div className="text-sm mt-1">
+                {ffmpegStatus.message}
+              </div>
+              <div className="text-xs mt-2 text-da-text-muted">
+                Video rendering will not work without ffmpeg installed.
+              </div>
+            </div>
+          )}
+
           {/* whisper section (rules 26-32) */}
           <section>
             <SectionHeader title="Whisper Settings" />
@@ -146,17 +196,17 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 </div>
               </div>
 
-              {/* scan/download/set buttons (rules 27-30) */}
+              {/* scan/download buttons (rules 27-30) */}
               <div className="flex gap-3">
                 <button 
-                  onClick={scanWhisper} 
+                  onClick={runAllChecks} 
                   disabled={scanning}
                   className="btn-secondary flex items-center gap-2"
                 >
                   {scanning ? (
-                    <span className="animate-spin">⟳</span>
+                    <span className="animate-spin">+</span>
                   ) : (
-                    <span>🔍</span>
+                    <span>*</span>
                   )}
                   Scan
                 </button>
@@ -167,9 +217,9 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                   className="btn-primary flex items-center gap-2"
                 >
                   {downloading ? (
-                    <span className="animate-pulse">⬇️</span>
+                    <span className="animate-pulse">...</span>
                   ) : (
-                    <span>⬇️</span>
+                    <span>+</span>
                   )}
                   Download {local.whisperModel}
                 </button>
@@ -191,8 +241,8 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                   <div>
                     <div className="font-medium">Use GPU (CUDA)</div>
                     <div className="text-xs text-da-text-muted">
-                      {gpuInfo?.available 
-                        ? `GPU detected: ${gpuInfo.name || 'NVIDIA GPU'}`
+                      {gpuInfo?.cuda 
+                        ? `GPU detected: ${gpuInfo.device} (${gpuInfo.vram}GB VRAM)`
                         : 'No GPU detected - will use CPU (slower)'}
                     </div>
                   </div>
@@ -361,10 +411,33 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
 
               {/* revert button (rules 71-72) */}
               <button className="btn-secondary w-full flex items-center justify-center gap-2 text-da-warning">
-                <span>🔄</span>
+                <span>~</span>
                 Revert Deleted Videos
                 <span className="text-xs">(shows preview first)</span>
               </button>
+            </div>
+          </section>
+
+          {/* system status */}
+          <section>
+            <SectionHeader title="System Status" />
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <StatusItem 
+                label="FFmpeg" 
+                ok={ffmpegStatus?.ffmpeg ?? false} 
+              />
+              <StatusItem 
+                label="FFprobe" 
+                ok={ffmpegStatus?.ffprobe ?? false} 
+              />
+              <StatusItem 
+                label="CUDA GPU" 
+                ok={gpuInfo?.cuda ?? false} 
+              />
+              <StatusItem 
+                label={`Whisper ${local.whisperModel}`}
+                ok={whisperStatus?.[local.whisperModel as keyof WhisperStatus] ?? false} 
+              />
             </div>
           </section>
         </div>
@@ -384,6 +457,18 @@ function SectionHeader({ title }: { title: string }) {
     <div className="flex items-center gap-2">
       <h3 className="text-lg font-semibold text-da-pink">{title}</h3>
       <div className="flex-1 h-px bg-da-pink/30" />
+    </div>
+  )
+}
+
+function StatusItem({ label, ok }: { label: string; ok: boolean }) {
+  return (
+    <div className={`p-3 rounded-lg ${ok ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
+      <div className="flex items-center gap-2">
+        <div className={`w-2 h-2 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`} />
+        <span className="text-sm">{label}</span>
+        <span className="text-xs ml-auto">{ok ? 'OK' : 'Missing'}</span>
+      </div>
     </div>
   )
 }

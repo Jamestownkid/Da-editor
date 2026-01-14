@@ -1,15 +1,15 @@
 /**
- * Da Editor - Preload Script
- * ===========================
- * this is the bridge between renderer and main process
+ * Da Editor - Preload Script (v2)
+ * ================================
+ * bridge between renderer and main process
  * keeps things secure with context isolation
  * 
- * exposing only what we need to the frontend
+ * FIXED: added ffmpeg check, gpu check, download-whisper
  */
 
 import { contextBridge, ipcRenderer } from 'electron'
 
-// 1a. expose electron APIs to the renderer process safely
+// expose electron APIs to the renderer process safely
 contextBridge.exposeInMainWorld('electronAPI', {
   // settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
@@ -30,10 +30,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   runJob: (folder: string, settings: any) => ipcRenderer.invoke('run-job', folder, settings),
   stopJob: () => ipcRenderer.invoke('stop-job'),
   
-  // system checks
+  // system checks - FIXED
   checkSystem: () => ipcRenderer.invoke('check-system'),
+  checkFfmpeg: () => ipcRenderer.invoke('check-ffmpeg'),
   checkPythonDeps: () => ipcRenderer.invoke('check-python-deps'),
+  checkGpu: () => ipcRenderer.invoke('check-gpu'),
   scanWhisper: () => ipcRenderer.invoke('scan-whisper'),
+  downloadWhisper: (model: string) => ipcRenderer.invoke('download-whisper', model),
   
   // event listeners for job progress
   onJobProgress: (callback: (msg: string) => void) => {
@@ -50,7 +53,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }
 })
 
-// 1b. type declarations for typescript
+// type declarations for typescript
 declare global {
   interface Window {
     electronAPI: {
@@ -66,12 +69,14 @@ declare global {
       runJob: (folder: string, settings: any) => Promise<{ success: boolean }>
       stopJob: () => Promise<boolean>
       checkSystem: () => Promise<any>
-      checkPythonDeps: () => Promise<{ installed: boolean; python: string | null }>
+      checkFfmpeg: () => Promise<{ ffmpeg: boolean; ffprobe: boolean; message: string }>
+      checkPythonDeps: () => Promise<{ installed: boolean; python: string | null; missing?: string[] }>
+      checkGpu: () => Promise<{ cuda: boolean; device: string; vram: number }>
       scanWhisper: () => Promise<Record<string, boolean>>
+      downloadWhisper: (model: string) => Promise<{ success: boolean; output?: string }>
       onJobProgress: (callback: (msg: string) => void) => void
       onJobError: (callback: (msg: string) => void) => void
       removeJobListeners: () => void
     }
   }
 }
-
