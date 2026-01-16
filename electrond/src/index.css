@@ -1,0 +1,301 @@
+/**
+ * Da Editor - Global Styles
+ * ==========================
+ * pink vibes only in this codebase
+ * we dont do boring default styles round here
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 1a. custom scrollbar - gotta make everything look clean */
+/* always visible scrollbar - make it obvious you can scroll */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a2e;
+  border-radius: 5px;
+  border: 1px solid #2a2a4e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #e94560, #ff4d6d);
+  border-radius: 5px;
+  border: 2px solid #1a1a2e;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #ff6b8a, #ff8fab);
+}
+
+/* force scrollbar to always show */
+.scrollbar-always-show {
+  overflow-y: scroll !important;
+}
+
+.scrollbar-always-show::-webkit-scrollbar {
+  width: 12px;
+}
+
+.scrollbar-always-show::-webkit-scrollbar-thumb {
+  background: #e94560;
+  min-height: 50px;
+}
+
+/* 1b. selection color */
+::selection {
+  background: rgba(233, 69, 96, 0.4);
+  color: #ffffff;
+}
+
+/* 2a. base html reset */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0d0d14;
+  color: #ffffff;
+}
+
+#root {
+  height: 100%;
+}
+
+/* 2b. smooth everything */
+* {
+  box-sizing: border-box;
+  transition-property: background-color, border-color, color, opacity, transform, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+/* 3a. custom button styles */
+.btn-primary {
+  @apply px-6 py-3 bg-da-pink text-white font-semibold rounded-lg;
+  @apply hover:bg-da-pink-hover active:scale-95;
+  @apply disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100;
+  @apply shadow-pink hover:shadow-pink-lg;
+}
+
+.btn-secondary {
+  @apply px-4 py-2 bg-da-light text-da-text font-medium rounded-lg;
+  @apply border border-da-pink/30 hover:border-da-pink hover:bg-da-medium;
+  @apply active:scale-95 disabled:opacity-50;
+}
+
+.btn-ghost {
+  @apply px-4 py-2 bg-transparent text-da-text-dim font-medium rounded-lg;
+  @apply hover:bg-da-light hover:text-da-text active:scale-95;
+}
+
+/* 3b. input styles */
+.input-field {
+  @apply w-full px-4 py-3 bg-da-light text-da-text rounded-lg;
+  @apply border border-da-light focus:border-da-pink focus:outline-none;
+  @apply placeholder:text-da-text-muted;
+}
+
+.input-field:focus {
+  box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.2);
+}
+
+/* 4a. card styles */
+.card {
+  @apply bg-da-medium rounded-xl p-4 border border-da-light/50;
+}
+
+.card-hover {
+  @apply card hover:border-da-pink/50 hover:shadow-pink cursor-pointer;
+}
+
+/* 4b. job status badges */
+.badge {
+  @apply inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium;
+}
+
+.badge-pending {
+  @apply badge bg-da-warning/20 text-da-warning;
+}
+
+.badge-running {
+  @apply badge bg-da-pink/20 text-da-pink;
+}
+
+.badge-done {
+  @apply badge bg-da-success/20 text-da-success;
+}
+
+.badge-error {
+  @apply badge bg-da-error/20 text-da-error;
+}
+
+.badge-paused {
+  @apply badge bg-da-text-muted/20 text-da-text-muted;
+}
+
+/* 5a. animations */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(233, 69, 96, 0.1),
+    transparent
+  );
+  animation: shimmer 2s infinite;
+}
+
+/* 5b. confetti animation */
+.confetti-particle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  animation: confetti-fall 1s ease-out forwards;
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(200px) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+/* 6a. progress bar */
+.progress-bar {
+  @apply h-2 bg-da-light rounded-full overflow-hidden;
+}
+
+.progress-bar-fill {
+  @apply h-full bg-da-pink rounded-full transition-all duration-300;
+  background: linear-gradient(90deg, #e94560, #ff6b8a);
+}
+
+/* 6b. glow effects */
+.glow-pink {
+  box-shadow: 0 0 30px rgba(233, 69, 96, 0.4);
+}
+
+.glow-success {
+  box-shadow: 0 0 30px rgba(78, 204, 163, 0.4);
+}
+
+/* 7a. drag handle for title bar */
+.drag-handle {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* 8a. MORE ANIMATIONS */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out forwards;
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out forwards;
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(233, 69, 96, 0.3); }
+  50% { box-shadow: 0 0 30px rgba(233, 69, 96, 0.6); }
+}
+
+.animate-glow {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+
+/* 8b. BETTER SCROLLBAR - thin and visible */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(233, 69, 96, 0.5);
+  border-radius: 3px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(233, 69, 96, 0.8);
+}
+
+/* 9a. GRADIENT TEXT */
+.text-gradient {
+  background: linear-gradient(135deg, #e94560, #a855f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* 9b. GLASS EFFECT */
+.glass {
+  background: rgba(13, 13, 20, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(233, 69, 96, 0.2);
+}
+
+/* 10. HOVER LIFT EFFECT */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(233, 69, 96, 0.3);
+}
+

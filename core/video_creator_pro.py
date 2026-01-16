@@ -529,47 +529,64 @@ class VideoCreatorPro:
         fps: int,
         bg_color: str
     ) -> bool:
-        """Single-pass portrait video creation"""
+        """Single-pass portrait video creation using concat demuxer for stability"""
         n = len(images)
-        total_frames = int(duration * fps)
         
-        inputs = []
-        filters = []
-        
+        # Create individual clips first (more stable with varying image sizes)
+        temp_clips = []
         for i, img in enumerate(images):
-            inputs.extend(["-loop", "1", "-t", str(duration), "-i", img])
+            clip_path = os.path.join(self.output_dir, f"_p_clip_{i:03d}.mp4")
             
-            effect = random.choice(["zoom_in", "static"])
-            zoom = f"1+0.03*on/{total_frames}" if effect == "zoom_in" else "1"
-            
-            filters.append(
-                f"[{i}:v]scale={int(width*1.1)}:{int(image_area_height*1.1)}:force_original_aspect_ratio=decrease,"
-                f"pad={int(width*1.1)}:{int(image_area_height*1.1)}:(ow-iw)/2:0:color=#{bg_color},"
-                f"zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='0':"
-                f"d={total_frames}:s={width}x{image_area_height}:fps={fps},"
+            # Simple filter: scale to fit, pad to full portrait
+            filter_chain = (
+                f"scale={width}:{image_area_height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{image_area_height}:(ow-iw)/2:(oh-ih)/2:color=#{bg_color},"
                 f"pad={width}:{height}:0:0:color=#{bg_color},"
-                f"setpts=PTS-STARTPTS,format=yuv420p[v{i}]"
+                f"fps={fps},format=yuv420p"
             )
+            
+            result = subprocess.run([
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", img,
+                "-vf", filter_chain,
+                "-t", str(duration),
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                *self.MP4_FLAGS,
+                clip_path
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0 and os.path.exists(clip_path):
+                temp_clips.append(clip_path)
         
-        # Concat
-        concat_inputs = "".join(f"[v{i}]" for i in range(n))
-        filters.append(f"{concat_inputs}concat=n={n}:v=1:a=0[outv]")
+        if not temp_clips:
+            return False
         
-        filter_complex = ";".join(filters)
+        # Concat using demuxer (more stable than filtergraph for many inputs)
+        concat_file = os.path.join(self.output_dir, "_p_concat.txt")
+        with open(concat_file, "w") as f:
+            for clip in temp_clips:
+                f.write(f"file '{clip}'\n")
         
-        cmd = ["ffmpeg", "-y"]
-        cmd.extend(inputs)
-        cmd.extend([
-            "-filter_complex", filter_complex,
-            "-map", "[outv]",
+        result = subprocess.run([
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", concat_file,
             "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-            "-r", str(fps),
             *self.MP4_FLAGS,
             output
-        ])
+        ], capture_output=True, text=True)
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        return result.returncode == 0 and os.path.exists(output)
+        # Cleanup
+        for clip in temp_clips:
+            self._safe_delete(clip)
+        self._safe_delete(concat_file)
+        
+        if result.returncode != 0:
+            err = result.stderr or ""
+            print(f"[VideoCreator] portrait concat error: {err[-300:]}")
+            return False
+        
+        return os.path.exists(output) and os.path.getsize(output) > 1000
     
     def create_youtube_mix(
         self,
@@ -640,42 +657,56 @@ class VideoCreatorPro:
             if not final_specs:
                 return None
             
-            # Build single-pass concat
-            temp_video = os.path.join(self.output_dir, "_yt_single.mp4")
-            
-            inputs = []
-            filters = []
-            
+            # Extract clips individually (more stable with varying video codecs)
+            temp_clips = []
             for i, (vid, start, dur) in enumerate(final_specs):
-                inputs.extend(["-ss", str(start), "-t", str(dur), "-i", vid])
+                clip_path = os.path.join(self.output_dir, f"_yt_clip_{i:03d}.mp4")
                 
-                filters.append(
-                    f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,"
-                    f"fps={fps},setpts=PTS-STARTPTS,format=yuv420p[v{i}]"
-                )
+                result = subprocess.run([
+                    "ffmpeg", "-y",
+                    "-ss", str(start),
+                    "-i", vid,
+                    "-t", str(dur),
+                    "-an",  # mute source audio
+                    "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                           f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,"
+                           f"fps={fps},format=yuv420p",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    *self.MP4_FLAGS,
+                    clip_path
+                ], capture_output=True, text=True)
+                
+                if result.returncode == 0 and os.path.exists(clip_path):
+                    temp_clips.append(clip_path)
             
-            n = len(final_specs)
-            concat_inputs = "".join(f"[v{i}]" for i in range(n))
-            filters.append(f"{concat_inputs}concat=n={n}:v=1:a=0[outv]")
+            if not temp_clips:
+                print("[VideoCreator] youtube mix: no clips extracted")
+                return None
             
-            filter_complex = ";".join(filters)
+            # Concat using demuxer
+            temp_video = os.path.join(self.output_dir, "_yt_single.mp4")
+            concat_file = os.path.join(self.output_dir, "_yt_concat.txt")
             
-            cmd = ["ffmpeg", "-y"]
-            cmd.extend(inputs)
-            cmd.extend([
-                "-filter_complex", filter_complex,
-                "-map", "[outv]",
+            with open(concat_file, "w") as f:
+                for clip in temp_clips:
+                    f.write(f"file '{clip}'\n")
+            
+            result = subprocess.run([
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0",
+                "-i", concat_file,
                 "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-                "-r", str(fps),
                 *self.MP4_FLAGS,
                 temp_video
-            ])
+            ], capture_output=True, text=True)
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Cleanup clips
+            for clip in temp_clips:
+                self._safe_delete(clip)
+            self._safe_delete(concat_file)
             
             if result.returncode != 0:
-                print(f"[VideoCreator] youtube mix failed: {result.stderr[:300] if result.stderr else 'unknown'}")
+                print(f"[VideoCreator] youtube mix concat failed: {result.stderr[-300:] if result.stderr else 'unknown'}")
                 return None
             
             # Add SFX

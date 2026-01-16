@@ -1,12 +1,15 @@
 """
-Da Editor - Pro Image Scraper (v4)
+Da Editor - Pro Image Scraper (v3)
 ===================================
-FIXED:
-- REUSE ONE BROWSER PER JOB (massive performance improvement)
-- No more spawning chromium per keyword (was killing CPU/RAM)
-- Scrape time capped at 10 minutes total
+the REAL scraper that actually clicks thumbnails and gets full-res images
+
+rules 81-92, 115-118:
+- playwright clicks thumbnails to get actual source URLs (not thumbnails)
+- puppeteer/bing as fallback
 - ABC quality checks with hamming distance dedupe
 - cinema-clean images only
+- hard caps on download size
+- manifest persistence
 """
 
 import os
@@ -84,7 +87,7 @@ class ImageScraperPro:
     def __init__(
         self,
         output_dir: str,
-        min_width: int = 900,
+        min_width: int = 900,  # rule 115
         min_height: int = 700,
         min_size_kb: int = 50,
         manifest_path: str = None
@@ -95,16 +98,9 @@ class ImageScraperPro:
         self.min_size_kb = min_size_kb
         self.manifest_path = manifest_path
         
-        # tracking for deduplication
+        # tracking for deduplication (rules 87-90)
         self.used_urls: Set[str] = set()
         self.used_hashes: Dict[str, str] = {}  # hash -> filepath
-        
-        # FIXED: Reuse browser across searches
-        self._browser = None
-        self._context = None
-        self._playwright = None
-        self._scrape_start_time = None
-        self._max_scrape_time = 10 * 60  # 10 minute cap
         
         os.makedirs(output_dir, exist_ok=True)
         
@@ -112,7 +108,7 @@ class ImageScraperPro:
         if manifest_path:
             self._load_manifest()
         
-        print(f"[Scraper v4] ready - min {min_width}x{min_height}, reusing browser")
+        print(f"[Scraper v3] ready - min {min_width}x{min_height}, max {self.MAX_DOWNLOAD_SIZE // (1024*1024)}MB")
     
     def _load_manifest(self):
         """load existing manifest for cross-job deduplication"""
@@ -126,43 +122,6 @@ class ImageScraperPro:
             except Exception as e:
                 print(f"[Scraper] manifest load error: {e}")
     
-    def _get_browser(self):
-        """FIXED: Get or create browser - REUSES existing browser"""
-        if self._browser is not None:
-            return self._browser
-        
-        try:
-            from playwright.sync_api import sync_playwright
-            
-            self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(headless=True)
-            self._context = self._browser.new_context(
-                user_agent=random.choice(self.USER_AGENTS),
-                viewport={"width": 1920, "height": 1080}
-            )
-            print("[Scraper] browser started (will be reused)")
-            return self._browser
-        except Exception as e:
-            print(f"[Scraper] failed to start browser: {e}")
-            return None
-    
-    def _close_browser(self):
-        """Close the browser when done"""
-        try:
-            if self._browser:
-                self._browser.close()
-                self._browser = None
-            if self._playwright:
-                self._playwright.stop()
-                self._playwright = None
-            self._context = None
-        except:
-            pass
-    
-    def __del__(self):
-        """Cleanup browser on destruction"""
-        self._close_browser()
-    
     def save_manifest(self):
         """save manifest for persistence (rule 88)"""
         if self.manifest_path:
@@ -175,39 +134,38 @@ class ImageScraperPro:
     
     def search(self, keyword: str, max_images: int = 5) -> List[str]:
         """
-        main search - FIXED: reuses browser, respects time limit
+        main search - playwright clicks thumbnails, puppeteer/bing fallback
+        (rules 77-79)
         """
-        # Initialize scrape start time if not set
-        if self._scrape_start_time is None:
-            self._scrape_start_time = time.time()
-        
-        # Check time limit
-        elapsed = time.time() - self._scrape_start_time
-        if elapsed > self._max_scrape_time:
-            print(f"[Scraper] time limit reached ({elapsed:.0f}s), skipping search")
-            return []
-        
         print(f"[Scraper] searching: {keyword}")
         downloaded = []
         
-        # step 1: playwright with SHARED browser
+        # step 1: playwright with thumbnail clicking (rule 77)
         try:
             downloaded = self._search_playwright_click(keyword, max_images)
-            print(f"[Scraper] playwright: {len(downloaded)} images")
+            print(f"[Scraper] playwright (click method): {len(downloaded)} images")
         except Exception as e:
             print(f"[Scraper] playwright failed: {e}")
         
-        # step 2: bing fallback (check time limit first)
+        # step 2: bing fallback (rule 78)
         if len(downloaded) < max_images:
-            elapsed = time.time() - self._scrape_start_time
-            if elapsed < self._max_scrape_time:
-                try:
-                    remaining = max_images - len(downloaded)
-                    more = self._search_bing(keyword, remaining)
-                    downloaded.extend(more)
-                    print(f"[Scraper] bing fallback: {len(more)} more")
-                except Exception as e:
-                    print(f"[Scraper] bing failed: {e}")
+            try:
+                remaining = max_images - len(downloaded)
+                more = self._search_bing(keyword, remaining)
+                downloaded.extend(more)
+                print(f"[Scraper] bing fallback: {len(more)} more")
+            except Exception as e:
+                print(f"[Scraper] bing failed: {e}")
+        
+        # step 3: double-check pass with refined query (rule 79)
+        if len(downloaded) < max_images:
+            try:
+                remaining = max_images - len(downloaded)
+                more = self._search_bing(f"{keyword} high quality", remaining)
+                downloaded.extend(more)
+                print(f"[Scraper] double-check: {len(more)} more")
+            except Exception as e:
+                print(f"[Scraper] double-check failed: {e}")
         
         # save manifest after each search
         self.save_manifest()
@@ -216,164 +174,171 @@ class ImageScraperPro:
     
     def _search_playwright_click(self, keyword: str, max_images: int) -> List[str]:
         """
-        playwright scraper - FIXED: REUSES browser from _get_browser()
+        playwright scraper that ACTUALLY CLICKS thumbnails
+        this is the key - we need to click to get the real image URL
         """
-        browser = self._get_browser()
-        if not browser:
-            # Fallback to requests-only search
-            return self._search_bing_requests(keyword, max_images)
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            raise RuntimeError("playwright not installed - run: playwright install chromium")
         
         downloaded = []
         
-        # Use the shared context
-        if not self._context:
-            self._context = browser.new_context(
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
                 user_agent=random.choice(self.USER_AGENTS),
                 viewport={"width": 1920, "height": 1080}
             )
-        
-        page = self._context.new_page()
-        
-        # URL encode keyword properly
-        encoded_keyword = quote_plus(keyword)
-        search_url = f"https://www.google.com/search?q={encoded_keyword}&tbm=isch&tbs=isz:l"
-        
-        try:
-            page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-            time.sleep(2)  # let images load
+            page = context.new_page()
             
-            # handle consent if needed
+            # URL encode keyword properly
+            encoded_keyword = quote_plus(keyword)
+            search_url = f"https://www.google.com/search?q={encoded_keyword}&tbm=isch&tbs=isz:l"
+            
             try:
-                consent_btn = page.query_selector('button[aria-label*="Accept"]')
-                if consent_btn:
-                    consent_btn.click()
-                    time.sleep(1)
-            except:
-                pass
-            
-            # scroll to load more thumbnails
-            for _ in range(3):
-                page.evaluate("window.scrollBy(0, 600)")
-                time.sleep(0.4)
-            
-            # get all thumbnail containers - these are clickable
-            thumbnails = page.query_selector_all('div[jsname="dTDiAc"]')
-            if not thumbnails:
-                thumbnails = page.query_selector_all('div[data-id]')
-            
-            print(f"[Scraper] found {len(thumbnails)} thumbnails to try")
-            
-            tried = 0
-            for thumb in thumbnails[:max_images * 4]:
-                if len(downloaded) >= max_images:
-                    break
-                if tried >= max_images * 3:
-                    break
+                page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                time.sleep(2)  # let images load
                 
-                tried += 1
-                time.sleep(0.3)
-                
+                # handle consent if needed
                 try:
-                    thumb.click()
-                    time.sleep(0.8)
+                    consent_btn = page.query_selector('button[aria-label*="Accept"]')
+                    if consent_btn:
+                        consent_btn.click()
+                        time.sleep(1)
+                except:
+                    pass
+                
+                # scroll to load more thumbnails
+                for _ in range(3):
+                    page.evaluate("window.scrollBy(0, 600)")
+                    time.sleep(0.4)
+                
+                # get all thumbnail containers - these are clickable
+                # google images uses data-index for thumbnails
+                thumbnails = page.query_selector_all('div[jsname="dTDiAc"]')
+                if not thumbnails:
+                    thumbnails = page.query_selector_all('div[data-id]')
+                
+                print(f"[Scraper] found {len(thumbnails)} thumbnails to try")
+                
+                tried = 0
+                for thumb in thumbnails[:max_images * 4]:  # try more than needed
+                    if len(downloaded) >= max_images:
+                        break
+                    if tried >= max_images * 3:  # dont try forever
+                        break
                     
-                    real_img = page.query_selector('img[jsname="kn3ccd"]')
-                    if not real_img:
-                        real_img = page.query_selector('img.sFlh5c.pT0Scc.iPVvYb')
-                    if not real_img:
-                        real_img = page.query_selector('img[class*="r48jcc"]')
+                    tried += 1
+                    time.sleep(0.3)  # throttle (rule 92)
                     
-                    if real_img:
-                        src = real_img.get_attribute("src")
+                    try:
+                        # click the thumbnail to open preview panel
+                        thumb.click()
+                        time.sleep(0.8)  # wait for preview to load
                         
-                        if src and src.startswith("http") and "data:image" not in src:
-                            srcset = real_img.get_attribute("srcset")
-                            if srcset:
-                                parts = srcset.split(",")
-                                for part in reversed(parts):
-                                    url = part.strip().split(" ")[0]
-                                    if url.startswith("http"):
-                                        src = url
-                                        break
+                        # now extract the REAL image URL from the preview panel
+                        # it appears in an img with specific attributes
+                        real_img = page.query_selector('img[jsname="kn3ccd"]')
+                        if not real_img:
+                            real_img = page.query_selector('img.sFlh5c.pT0Scc.iPVvYb')
+                        if not real_img:
+                            real_img = page.query_selector('img[class*="r48jcc"]')
+                        
+                        if real_img:
+                            src = real_img.get_attribute("src")
                             
-                            if self._check_url(src):
-                                path = self._download_and_validate(src, keyword)
-                                if path:
-                                    downloaded.append(path)
-                    
-                    page.keyboard.press("Escape")
-                    time.sleep(0.2)
-                    
-                except Exception as e:
-                    continue
+                            # skip base64 and thumbnails
+                            if src and src.startswith("http") and "data:image" not in src:
+                                # also try to get from srcset which sometimes has higher res
+                                srcset = real_img.get_attribute("srcset")
+                                if srcset:
+                                    # parse srcset - usually has multiple resolutions
+                                    parts = srcset.split(",")
+                                    for part in reversed(parts):  # start from highest
+                                        url = part.strip().split(" ")[0]
+                                        if url.startswith("http"):
+                                            src = url
+                                            break
+                                
+                                # validate and download
+                                if self._check_url(src):
+                                    path = self._download_and_validate(src, keyword)
+                                    if path:
+                                        downloaded.append(path)
+                        
+                        # press escape to close preview
+                        page.keyboard.press("Escape")
+                        time.sleep(0.2)
+                        
+                    except Exception as e:
+                        # thumbnail click failed, try next
+                        continue
+                
+            except Exception as e:
+                print(f"[Scraper] page load error: {e}")
             
-        except Exception as e:
-            print(f"[Scraper] page load error: {e}")
-        finally:
-            try:
-                page.close()
-            except:
-                pass
+            browser.close()
         
         return downloaded
     
     def _search_bing(self, keyword: str, max_images: int) -> List[str]:
-        """bing images fallback - FIXED: REUSES browser"""
+        """bing images fallback - more reliable than google for direct scraping"""
         downloaded = []
         
-        browser = self._get_browser()
-        if not browser:
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            # fall back to requests
             return self._search_bing_requests(keyword, max_images)
         
-        # Use the shared context
-        if not self._context:
-            self._context = browser.new_context(
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
                 user_agent=random.choice(self.USER_AGENTS),
                 viewport={"width": 1920, "height": 1080}
             )
-        
-        page = self._context.new_page()
-        
-        encoded = quote_plus(keyword)
-        search_url = f"https://www.bing.com/images/search?q={encoded}&qft=+filterui:imagesize-large"
-        
-        try:
-            page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-            time.sleep(2)
+            page = context.new_page()
             
-            # scroll
-            for _ in range(3):
-                page.evaluate("window.scrollBy(0, 600)")
-                time.sleep(0.4)
+            encoded = quote_plus(keyword)
+            search_url = f"https://www.bing.com/images/search?q={encoded}&qft=+filterui:imagesize-large"
             
-            # bing stores the actual image URL in the murl attribute
-            images = page.query_selector_all('a.iusc')
-            
-            for img in images[:max_images * 3]:
-                if len(downloaded) >= max_images:
-                    break
-                
-                try:
-                    m_attr = img.get_attribute("m")
-                    if m_attr:
-                        data = json.loads(m_attr)
-                        url = data.get("murl")
-                        
-                        if url and self._check_url(url):
-                            time.sleep(0.3)
-                            path = self._download_and_validate(url, keyword)
-                            if path:
-                                downloaded.append(path)
-                except:
-                    continue
-            
-        except Exception as e:
-            print(f"[Scraper] bing error: {e}")
-        finally:
             try:
-                page.close()
-            except:
-                pass
+                page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                time.sleep(2)
+                
+                # scroll
+                for _ in range(3):
+                    page.evaluate("window.scrollBy(0, 600)")
+                    time.sleep(0.4)
+                
+                # bing stores the actual image URL in the murl attribute
+                # we can extract it from the page without clicking
+                images = page.query_selector_all('a.iusc')
+                
+                for img in images[:max_images * 3]:
+                    if len(downloaded) >= max_images:
+                        break
+                    
+                    try:
+                        # bing has a 'm' attribute with JSON containing the real URL
+                        m_attr = img.get_attribute("m")
+                        if m_attr:
+                            data = json.loads(m_attr)
+                            url = data.get("murl")  # murl is the media URL (full res)
+                            
+                            if url and self._check_url(url):
+                                time.sleep(0.3)
+                                path = self._download_and_validate(url, keyword)
+                                if path:
+                                    downloaded.append(path)
+                    except:
+                        continue
+                
+            except Exception as e:
+                print(f"[Scraper] bing error: {e}")
+            
+            browser.close()
         
         return downloaded
     
