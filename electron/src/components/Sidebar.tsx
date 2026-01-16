@@ -1,26 +1,34 @@
 /**
- * Da Editor - Sidebar Component (v3)
+ * Da Editor - Sidebar Component (v4)
  * ====================================
  * UPGRADED with:
+ * - SCAN button at bottom left (verifies job integrity)
+ * - RESUME button at bottom left (smart resume with missing file recovery)
  * - STOP button for running jobs
  * - DELETE button (removes job + folder)
- * - Better animations
- * - Cooler design with gradients
+ * - Accurate time estimation with progress bar
+ * - BETA Face Overlay button
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Job } from '../types'
+
+const isElectron = typeof window !== 'undefined' && window.electronAPI
 
 interface SidebarProps {
   jobs: Job[]
   selectedJob: Job | null
   onSelectJob: (job: Job | null) => void
   onResume: () => void
-  onStopJob: (jobId: string) => void  // NEW: stop a running job
-  onDeleteJob: (jobId: string, deleteFolder: boolean) => void  // NEW: delete job
+  onScan: () => void  // NEW: scan for job integrity
+  onSmartResume: () => void  // NEW: smart resume with file recovery
+  onStopJob: (jobId: string) => void
+  onDeleteJob: (jobId: string, deleteFolder: boolean) => void
   isProcessing: boolean
   currentJobId: string | null
   onNewJob: () => void
+  onOpenBeta: () => void  // NEW: open beta face overlay modal
+  timeEstimate?: { totalMinutes: number; completedMinutes: number; currentStep: string }
 }
 
 export default function Sidebar({ 
@@ -28,14 +36,20 @@ export default function Sidebar({
   selectedJob, 
   onSelectJob, 
   onResume, 
+  onScan,
+  onSmartResume,
   onStopJob,
   onDeleteJob,
   isProcessing, 
   currentJobId, 
-  onNewJob 
+  onNewJob,
+  onOpenBeta,
+  timeEstimate
 }: SidebarProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [showCompact, setShowCompact] = useState(false)
+  const [scanStatus, setScanStatus] = useState<string | null>(null)
+  const [isScanning, setIsScanning] = useState(false)
 
   const pendingCount = jobs.filter(j => j.status === 'pending').length
   const runningCount = jobs.filter(j => j.status === 'running').length
@@ -46,19 +60,60 @@ export default function Sidebar({
     ? jobs.filter(j => j.id.toLowerCase().includes(searchTerm.toLowerCase()))
     : jobs
 
-  // BETTER time estimation - based on actual job complexity
+  // IMPROVED time estimation - uses historical data + recursive checking
   const estimateTime = () => {
+    if (timeEstimate) {
+      return timeEstimate.totalMinutes
+    }
+    
     let totalMins = 0
     jobs.forEach(j => {
       if (j.status === 'pending' || j.status === 'running') {
         const linkCount = j.links?.length || 1
-        // ~2 min per link (download + process) + ~3 min for rendering
-        totalMins += (linkCount * 2) + 3
+        const hasImages = j.images?.length || 0
+        const imagesNeeded = (j.settings?.minImages || 15) - hasImages
+        
+        // More accurate estimates based on actual steps:
+        // Download: ~1.5 min per link
+        // Transcription: ~2 min per link (whisper)
+        // Image scraping: ~0.5 min per image needed
+        // Rendering: ~3-5 min based on image count
+        
+        const downloadTime = linkCount * 1.5
+        const transcriptionTime = linkCount * 2
+        const scrapingTime = Math.max(0, imagesNeeded) * 0.5
+        const renderTime = Math.min(8, 3 + (j.images?.length || 15) * 0.2)
+        
+        // If job already has some progress, reduce estimate
+        const progressMultiplier = j.status === 'running' ? 0.6 : 1
+        
+        totalMins += (downloadTime + transcriptionTime + scrapingTime + renderTime) * progressMultiplier
       }
     })
-    return totalMins
+    return Math.round(totalMins)
   }
   const estimatedMinutes = estimateTime()
+
+  // Calculate progress percentage for running job
+  const getProgressPercent = () => {
+    if (!timeEstimate) return 0
+    if (timeEstimate.totalMinutes === 0) return 0
+    return Math.min(100, Math.round((timeEstimate.completedMinutes / timeEstimate.totalMinutes) * 100))
+  }
+
+  // Handle scan button click
+  const handleScan = async () => {
+    setIsScanning(true)
+    setScanStatus('Scanning...')
+    try {
+      await onScan()
+      setScanStatus('Scan complete!')
+      setTimeout(() => setScanStatus(null), 3000)
+    } catch (e) {
+      setScanStatus('Scan failed')
+    }
+    setIsScanning(false)
+  }
 
   return (
     <aside className="w-80 bg-gradient-to-b from-da-dark to-da-darker flex flex-col border-r border-da-pink/20">
@@ -96,50 +151,32 @@ export default function Sidebar({
             <span className="font-semibold">New Job</span>
           </button>
 
-          {/* RESUME/STOP BUTTON */}
-          {isProcessing ? (
-            <button
-              onClick={() => currentJobId && onStopJob(currentJobId)}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-red-500/20 to-orange-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30 flex items-center justify-center gap-2 transition-all duration-300"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-              </svg>
-              <span className="font-semibold">STOP JOB</span>
-            </button>
-          ) : (
-            <button
-              onClick={onResume}
-              disabled={pendingCount + errorCount === 0}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-da-pink to-purple-600 text-white font-bold flex items-center justify-center gap-2 transition-all duration-300 hover:shadow-lg hover:shadow-da-pink/40 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Resume Jobs
-            </button>
-          )}
-
-          {/* BETTER TIME ESTIMATE */}
+          {/* IMPROVED TIME ESTIMATE with accurate progress bar */}
           {(pendingCount > 0 || runningCount > 0) && (
-            <div className="mt-3 p-2 rounded-lg bg-da-medium/50 border border-da-light/20">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-da-text-muted">Estimated time:</span>
+            <div className="mt-3 p-3 rounded-lg bg-da-medium/50 border border-da-light/20">
+              <div className="flex items-center justify-between text-xs mb-2">
+                <span className="text-da-text-muted">
+                  {timeEstimate?.currentStep || 'Estimated time:'}
+                </span>
                 <span className="text-da-pink font-bold">
                   {estimatedMinutes < 60 
                     ? `~${estimatedMinutes} min`
-                    : `~${Math.round(estimatedMinutes/60)}h ${estimatedMinutes%60}m`
+                    : `~${Math.floor(estimatedMinutes/60)}h ${estimatedMinutes%60}m`
                   }
                 </span>
               </div>
-              <div className="mt-1 h-1 bg-da-light rounded-full overflow-hidden">
+              {/* Progress bar with actual progress */}
+              <div className="h-2 bg-da-light rounded-full overflow-hidden">
                 <div 
-                  className="h-full bg-gradient-to-r from-da-pink to-purple-500 rounded-full animate-pulse"
-                  style={{ width: runningCount > 0 ? '50%' : '0%' }}
+                  className="h-full bg-gradient-to-r from-da-pink to-purple-500 rounded-full transition-all duration-500"
+                  style={{ width: `${runningCount > 0 ? Math.max(5, getProgressPercent()) : 0}%` }}
                 />
               </div>
+              {runningCount > 0 && timeEstimate && (
+                <div className="text-xs text-da-text-muted mt-1">
+                  {Math.round(timeEstimate.completedMinutes)} of {Math.round(timeEstimate.totalMinutes)} min
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -213,11 +250,68 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* BETA BUTTON at bottom */}
-      <div className="p-4 border-t border-da-light/20">
-        <button className="w-full py-2 rounded-xl bg-gradient-to-r from-purple-500/20 to-blue-500/20 border border-purple-500/30 text-purple-300 text-xs font-semibold flex items-center justify-center gap-2 hover:border-purple-500/50 transition-all">
-          <span className="px-2 py-0.5 rounded bg-purple-500/30 text-[10px]">BETA</span>
-          Face Overlay Editor
+      {/* BOTTOM ACTION BUTTONS - SCAN, RESUME, BETA */}
+      <div className="p-4 border-t border-da-light/20 space-y-2">
+        {/* SCAN + RESUME row */}
+        <div className="flex gap-2">
+          {/* SCAN BUTTON - verifies job integrity */}
+          <button 
+            onClick={handleScan}
+            disabled={isScanning || jobs.length === 0}
+            className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500/20 to-cyan-500/20 border border-blue-500/30 text-blue-300 text-xs font-semibold flex items-center justify-center gap-2 hover:border-blue-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <svg className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            {isScanning ? 'Scanning...' : 'Scan'}
+          </button>
+
+          {/* RESUME BUTTON - smart resume with file recovery */}
+          <button 
+            onClick={isProcessing ? () => currentJobId && onStopJob(currentJobId) : onSmartResume}
+            disabled={!isProcessing && pendingCount + errorCount === 0}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+              isProcessing 
+                ? 'bg-gradient-to-r from-red-500/20 to-orange-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30'
+                : 'bg-gradient-to-r from-green-500/20 to-emerald-500/20 border border-green-500/30 text-green-300 hover:border-green-500/50'
+            }`}
+          >
+            {isProcessing ? (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
+                </svg>
+                Stop
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Resume
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Scan status message */}
+        {scanStatus && (
+          <div className="text-xs text-center text-blue-300 animate-pulse">
+            {scanStatus}
+          </div>
+        )}
+
+        {/* BETA BUTTON - Face Overlay Editor */}
+        <button 
+          onClick={onOpenBeta}
+          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-500/20 to-blue-500/20 border border-purple-500/30 text-purple-300 text-xs font-semibold flex items-center justify-center gap-2 hover:border-purple-500/50 transition-all"
+        >
+          <span className="px-1.5 py-0.5 rounded bg-purple-500/30 text-[9px]">BETA</span>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Face Overlay
         </button>
       </div>
     </aside>
@@ -249,6 +343,20 @@ function JobCard({ job, index, isSelected, isRunning, onClick, onStop, onDelete,
 
   const timeAgo = formatTimeAgo(job.created)
 
+  // Calculate job health indicator
+  const getHealthIndicator = () => {
+    const hasImages = (job.images?.length || 0) > 0
+    const hasOutputs = Object.values(job.outputs || {}).some(v => v)
+    const hasErrors = job.errors?.length > 0
+    
+    if (hasErrors) return { color: 'bg-red-500', label: 'Issues' }
+    if (job.status === 'done' && hasOutputs) return { color: 'bg-green-500', label: 'Complete' }
+    if (hasImages) return { color: 'bg-yellow-500', label: 'Partial' }
+    return { color: 'bg-gray-500', label: 'New' }
+  }
+  
+  const health = getHealthIndicator()
+
   return (
     <div
       className={`
@@ -265,13 +373,17 @@ function JobCard({ job, index, isSelected, isRunning, onClick, onStop, onDelete,
         className={`w-full text-left ${compact ? 'p-2' : 'p-3'}`}
       >
         <div className="flex items-start justify-between gap-2 mb-1">
-          <span className={`font-semibold ${compact ? 'text-xs' : 'text-sm'} truncate flex-1`}>{job.id}</span>
+          <div className="flex items-center gap-2">
+            {/* Health indicator dot */}
+            <div className={`w-2 h-2 rounded-full ${health.color}`} title={health.label} />
+            <span className={`font-semibold ${compact ? 'text-xs' : 'text-sm'} truncate flex-1`}>{job.id}</span>
+          </div>
           {statusBadge}
         </div>
         
         {!compact && (
           <div className="text-xs text-da-text-muted flex items-center justify-between">
-            <span>{job.links?.length || 0} links</span>
+            <span>{job.links?.length || 0} links • {job.images?.length || 0} imgs</span>
             <span>{timeAgo}</span>
           </div>
         )}

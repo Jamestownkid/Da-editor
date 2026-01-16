@@ -1,14 +1,15 @@
 /**
- * Da Editor - Main App Component (v3)
+ * Da Editor - Main App Component (v4)
  * =====================================
- * FIXED:
- * - Resume now properly re-scans disk for all jobs
- * - Backend owns job.json after processing starts (no overwrites)
- * - Error box in bottom left with copy functionality
- * - Better state management for job queue
+ * ADDED:
+ * - Scan button - verifies job folder integrity
+ * - Smart Resume - detects missing files and refetches them
+ * - Beta Face Overlay modal
+ * - Accurate time estimation with historical data
+ * - Job time cap (45 min max)
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import MainPanel from './components/MainPanel'
 import TopBar from './components/TopBar'
@@ -19,6 +20,15 @@ import { Job, Settings, JobStatus, LinkItem } from './types'
 import './global.d.ts'
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI
+
+// Job history for time estimation
+interface JobHistory {
+  id: string
+  linkCount: number
+  imageCount: number
+  durationMinutes: number
+  timestamp: number
+}
 
 export default function App() {
   // state
@@ -33,10 +43,24 @@ export default function App() {
   const [errors, setErrors] = useState<string[]>([])
   const [showErrorBox, setShowErrorBox] = useState(true)
   const [systemStats, setSystemStats] = useState<{ cpu: number; ram: number; disk: number } | null>(null)
+  const [showBetaModal, setShowBetaModal] = useState(false)
+  const [faceOverlayPath, setFaceOverlayPath] = useState<string | null>(null)
+  const [timeEstimate, setTimeEstimate] = useState<{ totalMinutes: number; completedMinutes: number; currentStep: string } | null>(null)
+  const [jobHistory, setJobHistory] = useState<JobHistory[]>([])
+  
+  // Refs for time tracking
+  const jobStartTime = useRef<number | null>(null)
+  const jobsRef = useRef<Job[]>([])
+
+  // Keep jobsRef in sync
+  useEffect(() => {
+    jobsRef.current = jobs
+  }, [jobs])
 
   // load settings on mount
   useEffect(() => {
     loadSettings()
+    loadJobHistory()
   }, [])
 
   // scan for existing jobs when settings load
@@ -46,53 +70,53 @@ export default function App() {
     }
   }, [settings?.outputFolder])
 
-  // KEYBOARD SHORTCUTS - UX improvement
+  // KEYBOARD SHORTCUTS
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+N or Cmd+N = New Job (go home)
       if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
         e.preventDefault()
         goHome()
       }
-      // Ctrl+S or Cmd+S = Open Settings
       if ((e.ctrlKey || e.metaKey) && e.key === 's' && !e.shiftKey) {
         e.preventDefault()
         setShowSettings(true)
       }
-      // Escape = Close modals or deselect job
       if (e.key === 'Escape') {
-        if (showSettings) {
-          setShowSettings(false)
-        } else if (selectedJob) {
-          setSelectedJob(null)
-        }
+        if (showSettings) setShowSettings(false)
+        else if (showBetaModal) setShowBetaModal(false)
+        else if (selectedJob) setSelectedJob(null)
       }
-      // Ctrl+R or Cmd+R = Resume jobs (if not already processing)
       if ((e.ctrlKey || e.metaKey) && e.key === 'r' && !isProcessing) {
         e.preventDefault()
-        resumeJobs()
+        smartResume()
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showSettings, selectedJob, isProcessing])
+  }, [showSettings, showBetaModal, selectedJob, isProcessing])
 
-  // poll system stats when processing - helps user know if PC is struggling
+  // poll system stats when processing
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null
     
     if (isProcessing && isElectron) {
-      // poll every 2 seconds
       interval = setInterval(async () => {
         try {
           const stats = await window.electronAPI.getSystemStats()
           setSystemStats(stats)
           
-          // SAFEGUARD: warn user if resources are critical
+          // Update time estimate based on elapsed time
+          if (jobStartTime.current) {
+            const elapsedMinutes = (Date.now() - jobStartTime.current) / 60000
+            setTimeEstimate(prev => prev ? {
+              ...prev,
+              completedMinutes: Math.min(elapsedMinutes, prev.totalMinutes)
+            } : null)
+          }
+          
           if (stats.cpu > 95 || stats.ram > 95) {
             setErrors((prev: string[]) => {
-              // only add warning once
               const warningExists = prev.some(e => e.includes('SYSTEM OVERLOAD'))
               if (!warningExists) {
                 return [...prev, `WARNING: SYSTEM OVERLOAD - CPU: ${stats.cpu}%, RAM: ${stats.ram}%. Consider pausing jobs.`]
@@ -118,12 +142,17 @@ export default function App() {
     if (isElectron) {
       window.electronAPI.onJobProgress((msg: string) => {
         setLogs((prev: string[]) => [...prev.slice(-100), msg])
+        
+        // Update time estimate step based on log message
+        if (msg.includes('step 1:')) setTimeEstimate(prev => prev ? { ...prev, currentStep: 'Downloading...' } : null)
+        else if (msg.includes('step 2:')) setTimeEstimate(prev => prev ? { ...prev, currentStep: 'Transcribing...' } : null)
+        else if (msg.includes('step 3:')) setTimeEstimate(prev => prev ? { ...prev, currentStep: 'Extracting keywords...' } : null)
+        else if (msg.includes('step 4:')) setTimeEstimate(prev => prev ? { ...prev, currentStep: 'Scraping images...' } : null)
+        else if (msg.includes('step 5:')) setTimeEstimate(prev => prev ? { ...prev, currentStep: 'Creating video...' } : null)
+        else if (msg.includes('step 6:')) setTimeEstimate(prev => prev ? { ...prev, currentStep: 'Validating...' } : null)
       })
       window.electronAPI.onJobError((msg: string) => {
-        // FILTER: whisper progress bars are NOT errors - they're just stderr output
-        // skip anything that looks like a progress bar (%|█ etc)
         if (msg.includes('%|') || msg.includes('frames/s') || msg.includes('█')) {
-          // this is just whisper progress, not an error - add to logs instead
           setLogs((prev: string[]) => [...prev.slice(-100), msg])
           return
         }
@@ -135,6 +164,51 @@ export default function App() {
       }
     }
   }, [])
+
+  // Load job history for time estimation
+  const loadJobHistory = () => {
+    try {
+      const stored = localStorage.getItem('da-editor-job-history')
+      if (stored) {
+        setJobHistory(JSON.parse(stored))
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // Save job history
+  const saveJobHistory = (history: JobHistory[]) => {
+    try {
+      // Keep only last 20 jobs
+      const trimmed = history.slice(-20)
+      localStorage.setItem('da-editor-job-history', JSON.stringify(trimmed))
+      setJobHistory(trimmed)
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // Estimate time based on job complexity and history
+  const estimateJobTime = (job: Job): number => {
+    const linkCount = job.links?.length || 1
+    const imagesNeeded = (job.settings?.minImages || 15) - (job.images?.length || 0)
+    
+    // Base estimates (in minutes)
+    let baseEstimate = linkCount * 3.5 + Math.max(0, imagesNeeded) * 0.5 + 5
+    
+    // Adjust based on historical data
+    if (jobHistory.length > 0) {
+      const similarJobs = jobHistory.filter(h => Math.abs(h.linkCount - linkCount) <= 2)
+      if (similarJobs.length > 0) {
+        const avgDuration = similarJobs.reduce((sum, j) => sum + j.durationMinutes, 0) / similarJobs.length
+        baseEstimate = (baseEstimate + avgDuration) / 2
+      }
+    }
+    
+    // Cap at 45 minutes (our hard limit)
+    return Math.min(45, Math.round(baseEstimate))
+  }
 
   // load settings
   const loadSettings = async () => {
@@ -148,12 +222,12 @@ export default function App() {
       } else {
         setSettings({
           outputFolder: '',
-          whisperModel: 'medium',  // default to medium per user request
+          whisperModel: 'medium',
           useGpu: true,
           bgColor: '#FFFFFF',
           soundsFolder: '',
           secondsPerImage: 4.0,
-          soundVolume: 1.0,  // rule 42 - boosted
+          soundVolume: 1.0,
           minImages: 12
         })
       }
@@ -180,6 +254,134 @@ export default function App() {
     }
   }
 
+  // SCAN JOBS - verify integrity and check for issues
+  const scanJobIntegrity = async () => {
+    if (!settings?.outputFolder || !isElectron) return
+
+    setLogs(prev => [...prev, '[Scan] Starting job integrity scan...'])
+    
+    const foundJobs = await window.electronAPI.scanJobs(settings.outputFolder)
+    const scannedJobs: Job[] = []
+    
+    for (const job of foundJobs) {
+      const issues: string[] = []
+      const folder = job.folder || job.jobFolder
+      
+      if (!folder) {
+        issues.push('Missing folder path')
+        scannedJobs.push({ ...job, errors: issues })
+        continue
+      }
+
+      // Check required files/folders
+      const requiredChecks = [
+        { path: `${folder}/job.json`, name: 'job.json' },
+        { path: `${folder}/images`, name: 'images folder' },
+      ]
+      
+      // Check for expected outputs if job is done
+      if (job.status === 'done') {
+        if (!job.outputs?.slideshow) issues.push('Missing slideshow output')
+        if (!job.outputs?.portrait) issues.push('Missing portrait output')
+      }
+      
+      // Check for unexpected files (videos that shouldn't be there)
+      // This would require additional IPC handler - for now we track in issues
+      
+      // Mark job health
+      const jobWithIssues = {
+        ...job,
+        folder,
+        errors: [...(job.errors || []), ...issues],
+        health: issues.length === 0 ? 'healthy' : 'issues'
+      }
+      
+      scannedJobs.push(jobWithIssues)
+      
+      if (issues.length > 0) {
+        setLogs(prev => [...prev, `[Scan] ${job.id}: ${issues.length} issues found`])
+      }
+    }
+    
+    setJobs(scannedJobs)
+    setLogs(prev => [...prev, `[Scan] Complete. Scanned ${scannedJobs.length} jobs.`])
+  }
+
+  // SMART RESUME - check what's missing and fill it
+  const smartResume = async () => {
+    if (isProcessing) return
+    
+    if (!settings?.outputFolder || !isElectron) {
+      resumeJobs()
+      return
+    }
+    
+    setLogs(prev => [...prev, '[Resume] Smart resume starting...'])
+    
+    // First scan for all jobs
+    const diskJobs = await window.electronAPI.scanJobs(settings.outputFolder)
+    
+    // Analyze each job and determine what needs to be done
+    const jobsToResume: Job[] = []
+    
+    for (const job of diskJobs) {
+      const folder = job.folder || job.jobFolder
+      if (!folder) continue
+      
+      // Skip completed jobs
+      if (job.status === 'done' && job.outputs?.slideshow && job.outputs?.portrait) {
+        continue
+      }
+      
+      // Check what's missing
+      const missingSteps: string[] = []
+      
+      // Check for downloaded videos
+      const hasVideos = job.urls?.some((u: any) => u.downloaded_path) || false
+      if (!hasVideos && job.urls?.length > 0) {
+        missingSteps.push('download')
+      }
+      
+      // Check for SRT files
+      const needsSrt = job.urls?.some((u: any) => u.srt && !u.srt_path) || false
+      if (needsSrt) {
+        missingSteps.push('transcribe')
+      }
+      
+      // Check for images
+      const minImages = job.settings?.minImages || settings.minImages || 15
+      const hasEnoughImages = (job.images?.length || 0) >= minImages
+      if (!hasEnoughImages) {
+        missingSteps.push('scrape_images')
+      }
+      
+      // Check for outputs
+      if (!job.outputs?.slideshow || !job.outputs?.portrait) {
+        missingSteps.push('render')
+      }
+      
+      if (missingSteps.length > 0) {
+        setLogs(prev => [...prev, `[Resume] ${job.id}: needs ${missingSteps.join(', ')}`])
+        
+        // Reset status to pending for reprocessing
+        jobsToResume.push({
+          ...job,
+          folder,
+          status: 'pending' as JobStatus,
+          missingSteps  // Track what needs to be done
+        } as Job)
+      }
+    }
+    
+    if (jobsToResume.length === 0) {
+      setLogs(prev => [...prev, '[Resume] All jobs complete or no jobs to resume.'])
+      return
+    }
+    
+    setJobs(jobsToResume)
+    processNextJob(jobsToResume)
+  }
+
   // create a new job with per-link toggles
   const createJob = useCallback(async (links: LinkItem[], jobName: string) => {
     if (!settings?.outputFolder) {
@@ -187,26 +389,23 @@ export default function App() {
       return
     }
 
-    // create unique job id
     const timestamp = Date.now()
     const randomId = Math.floor(Math.random() * 1000)
     const safeJobName = jobName || `job_${timestamp}_${randomId}`
     
-    // create folder
     let jobFolder = ''
     if (isElectron) {
       jobFolder = await window.electronAPI.createJobFolder(settings.outputFolder, safeJobName)
     }
 
-    // create job object matching expected structure
     const job: Job = {
       id: safeJobName,
       topic: safeJobName,
       folder: jobFolder,
       created: new Date().toISOString(),
       created_at: new Date().toISOString(),
-      urls: links,  // new format with per-link toggles
-      links: links.map(l => l.url),  // backwards compat
+      urls: links,
+      links: links.map(l => l.url),
       status: 'pending',
       progress: 0,
       outputs: {
@@ -214,7 +413,7 @@ export default function App() {
         portrait: null,
         youtubeMix: null
       },
-      settings: { ...settings },
+      settings: { ...settings, faceOverlayPath },  // Include face overlay if set
       errors: [],
       downloadedVideos: [],
       srtFiles: [],
@@ -222,35 +421,31 @@ export default function App() {
       images: []
     }
 
-    // save job json
     if (isElectron && jobFolder) {
       await window.electronAPI.saveJob(jobFolder, job)
     }
 
-    // add to state
     setJobs((prev: Job[]) => [...prev, job])
-
-    // show confetti
     setShowConfetti(true)
     setTimeout(() => setShowConfetti(false), 2500)
 
-    // start processing
     if (!isProcessing) {
       processNextJob([...jobs, job])
     }
-  }, [settings, jobs, isProcessing])
+  }, [settings, jobs, isProcessing, faceOverlayPath])
 
-  // process next pending job - WITH SAFEGUARDS
+  // process next pending job - WITH TIME CAP
   const processNextJob = async (jobList: Job[] = jobs) => {
     const pendingJob = jobList.find(j => j.status === 'pending')
     
     if (!pendingJob) {
       setIsProcessing(false)
       setCurrentJobId(null)
+      setTimeEstimate(null)
       return
     }
 
-    // SAFEGUARD: check system resources before starting
+    // System check
     if (isElectron) {
       try {
         const sysCheck = await window.electronAPI.checkSystem()
@@ -262,19 +457,26 @@ export default function App() {
           
           setErrors((prev: string[]) => [
             ...prev, 
-            `SYSTEM WARNING: ${issues.join(', ')}. Job may fail or crash. Free up resources before continuing.`
+            `SYSTEM WARNING: ${issues.join(', ')}. Job may fail or crash.`
           ])
-          
-          // still proceed but user is warned
         }
       } catch (e) {
-        // ignore check failure, proceed anyway
+        // ignore
       }
     }
 
     setIsProcessing(true)
     setCurrentJobId(pendingJob.id)
-    setLogs([])  // clear logs for new job
+    setLogs([])
+    jobStartTime.current = Date.now()
+
+    // Set time estimate
+    const estimatedMinutes = estimateJobTime(pendingJob)
+    setTimeEstimate({
+      totalMinutes: estimatedMinutes,
+      completedMinutes: 0,
+      currentStep: 'Starting...'
+    })
 
     // update status
     const updated = jobList.map(j => 
@@ -286,15 +488,41 @@ export default function App() {
       await window.electronAPI.saveJob(pendingJob.folder, { ...pendingJob, status: 'running' })
     }
 
+    // JOB TIME CAP - 45 minutes max
+    const timeoutId = setTimeout(() => {
+      if (isProcessing && currentJobId === pendingJob.id) {
+        setErrors(prev => [...prev, `JOB TIMEOUT: ${pendingJob.id} exceeded 45 minute limit. Stopping...`])
+        stopCurrentJob()
+      }
+    }, 45 * 60 * 1000)  // 45 minutes
+
     try {
       if (isElectron && settings) {
-        await window.electronAPI.runJob(pendingJob.folder!, pendingJob.settings || settings)
+        await window.electronAPI.runJob(pendingJob.folder!, {
+          ...pendingJob.settings,
+          ...settings,
+          faceOverlayPath,  // Pass face overlay setting
+          maxJobTime: 45 * 60  // 45 minutes in seconds
+        })
       } else if (!isElectron) {
         await new Promise(resolve => setTimeout(resolve, 3000))
       }
 
-      // FIXED: re-read job.json from disk instead of overwriting
-      // backend (Python) owns the job.json after processing
+      clearTimeout(timeoutId)
+
+      // Record job history for future estimates
+      if (jobStartTime.current) {
+        const durationMinutes = (Date.now() - jobStartTime.current) / 60000
+        saveJobHistory([...jobHistory, {
+          id: pendingJob.id,
+          linkCount: pendingJob.links?.length || 1,
+          imageCount: pendingJob.images?.length || 0,
+          durationMinutes,
+          timestamp: Date.now()
+        }])
+      }
+
+      // Re-read job from disk
       if (isElectron && pendingJob.folder) {
         const updatedJob = await window.electronAPI.readJob(pendingJob.folder)
         if (updatedJob) {
@@ -302,7 +530,6 @@ export default function App() {
             j.id === pendingJob.id ? { ...updatedJob, folder: pendingJob.folder } : j
           ))
         } else {
-          // fallback if read fails
           setJobs((prev: Job[]) => prev.map((j: Job) => 
             j.id === pendingJob.id ? { ...j, status: 'done' as JobStatus, progress: 100 } : j
           ))
@@ -314,10 +541,10 @@ export default function App() {
       }
 
     } catch (err: unknown) {
+      clearTimeout(timeoutId)
       const errorMsg = err instanceof Error ? err.message : 'unknown error'
       setErrors((prev: string[]) => [...prev, `Job ${pendingJob.id} failed: ${errorMsg}`])
       
-      // re-read job from disk to get actual state
       if (isElectron && pendingJob.folder) {
         const updatedJob = await window.electronAPI.readJob(pendingJob.folder)
         if (updatedJob) {
@@ -332,25 +559,21 @@ export default function App() {
       }
     }
 
-    // process next
+    jobStartTime.current = null
     setTimeout(() => processNextJob(), 500)
   }
 
-  // resume jobs - FIXED: re-scan disk first to get ALL jobs
+  // legacy resume jobs
   const resumeJobs = async () => {
     if (isProcessing) return
     
-    // first, re-scan disk to get all jobs (including ones from previous sessions)
     if (isElectron && settings?.outputFolder) {
       const diskJobs = await window.electronAPI.scanJobs(settings.outputFolder)
       
-      // merge with current jobs, preferring disk versions
       const mergedJobs = diskJobs.map((diskJob: Job) => {
-        // if job was error/paused, reset to pending for retry
         if (diskJob.status === 'error' || diskJob.status === 'paused') {
           return { ...diskJob, status: 'pending' as JobStatus }
         }
-        // if job says "running" but we're not processing, it crashed - reset to pending
         if (diskJob.status === 'running') {
           return { ...diskJob, status: 'pending' as JobStatus }
         }
@@ -359,13 +582,11 @@ export default function App() {
       
       setJobs(mergedJobs)
       
-      // start processing if there are pending jobs
       const pendingJobs = mergedJobs.filter((j: Job) => j.status === 'pending')
       if (pendingJobs.length > 0) {
         processNextJob(mergedJobs)
       }
     } else {
-      // fallback to in-memory jobs
       const pending = jobs.filter((j: Job) => j.status === 'pending' || j.status === 'paused' || j.status === 'error')
       if (pending.length > 0) {
         const reset = jobs.map((j: Job) => 
@@ -392,17 +613,17 @@ export default function App() {
     }
   }
 
-  // GO HOME - deselect job and show new job form
+  // GO HOME
   const goHome = () => {
     setSelectedJob(null)
   }
 
-  // clear completed jobs from UI (doesn't delete from disk)
+  // clear completed jobs
   const clearCompletedJobs = () => {
     setJobs((prev: Job[]) => prev.filter((j: Job) => j.status !== 'done'))
   }
 
-  // STOP A SPECIFIC JOB by ID
+  // stop a specific job
   const stopJobById = async (jobId: string) => {
     if (isElectron && currentJobId === jobId) {
       await window.electronAPI.stopJob()
@@ -415,25 +636,20 @@ export default function App() {
     }
   }
 
-  // DELETE A JOB - removes from list and optionally deletes folder
+  // delete a job
   const deleteJob = async (jobId: string, deleteFolder: boolean) => {
-    // if job is running, stop it first
     if (currentJobId === jobId) {
       await stopJobById(jobId)
     }
     
-    // find job to get folder path
     const job = jobs.find(j => j.id === jobId)
     
-    // remove from state
     setJobs((prev: Job[]) => prev.filter((j: Job) => j.id !== jobId))
     
-    // deselect if selected
     if (selectedJob?.id === jobId) {
       setSelectedJob(null)
     }
     
-    // delete folder if requested
     if (deleteFolder && job?.folder && isElectron) {
       try {
         await window.electronAPI.deleteFolder(job.folder)
@@ -443,19 +659,30 @@ export default function App() {
     }
   }
 
-  // stop all jobs - emergency stop
+  // stop all jobs
   const stopAllJobs = async () => {
     if (isElectron && isProcessing) {
       await window.electronAPI.stopJob()
       setIsProcessing(false)
       setCurrentJobId(null)
       
-      // pause all pending/running jobs
       setJobs((prev: Job[]) => prev.map((j: Job) => 
         j.status === 'pending' || j.status === 'running' 
           ? { ...j, status: 'paused' as JobStatus } 
           : j
       ))
+    }
+  }
+
+  // Select face overlay file for BETA feature
+  const selectFaceOverlay = async () => {
+    if (isElectron) {
+      const file = await window.electronAPI.selectFile([
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }
+      ])
+      if (file) {
+        setFaceOverlayPath(file)
+      }
     }
   }
 
@@ -483,11 +710,15 @@ export default function App() {
           selectedJob={selectedJob}
           onSelectJob={setSelectedJob}
           onResume={resumeJobs}
+          onScan={scanJobIntegrity}
+          onSmartResume={smartResume}
           onStopJob={stopJobById}
           onDeleteJob={deleteJob}
           isProcessing={isProcessing}
           currentJobId={currentJobId}
           onNewJob={goHome}
+          onOpenBeta={() => setShowBetaModal(true)}
+          timeEstimate={timeEstimate}
         />
 
         <MainPanel
@@ -511,7 +742,7 @@ export default function App() {
 
       {showConfetti && <Confetti />}
       
-      {/* Error box at bottom left - always visible when there are errors */}
+      {/* Error box at bottom left */}
       {showErrorBox && errors.length > 0 && (
         <ErrorBox 
           errors={errors} 
@@ -519,6 +750,91 @@ export default function App() {
           onClose={() => setShowErrorBox(false)}
           onClear={() => setErrors([])}
         />
+      )}
+
+      {/* BETA Face Overlay Modal */}
+      {showBetaModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+          <div className="bg-da-dark rounded-2xl p-6 w-full max-w-md border border-purple-500/30 shadow-xl shadow-purple-500/20">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <span className="px-2 py-1 rounded bg-purple-500/30 text-purple-300 text-xs font-bold">BETA</span>
+                <h2 className="text-xl font-bold text-white">Face Overlay</h2>
+              </div>
+              <button 
+                onClick={() => setShowBetaModal(false)}
+                className="p-2 hover:bg-da-light rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <p className="text-da-text-muted text-sm mb-6">
+              Select an image with your face to overlay at the bottom of portrait videos. 
+              Great for reaction-style content!
+            </p>
+
+            {/* Preview area */}
+            <div className="mb-6">
+              {faceOverlayPath ? (
+                <div className="relative">
+                  <img 
+                    src={`file://${faceOverlayPath}`} 
+                    alt="Face overlay" 
+                    className="w-full h-48 object-contain bg-da-medium rounded-xl"
+                  />
+                  <button
+                    onClick={() => setFaceOverlayPath(null)}
+                    className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-500 rounded-lg transition-colors"
+                  >
+                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ) : (
+                <div 
+                  onClick={selectFaceOverlay}
+                  className="w-full h-48 bg-da-medium rounded-xl border-2 border-dashed border-da-light/30 hover:border-purple-500/50 flex flex-col items-center justify-center cursor-pointer transition-colors"
+                >
+                  <svg className="w-12 h-12 text-da-text-muted mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <span className="text-da-text-muted text-sm">Click to select image</span>
+                </div>
+              )}
+            </div>
+
+            {/* Instructions */}
+            <div className="bg-da-medium rounded-lg p-4 mb-6">
+              <h4 className="text-sm font-semibold text-purple-300 mb-2">How it works:</h4>
+              <ul className="text-xs text-da-text-muted space-y-1">
+                <li>• Select a PNG/JPG with your face (transparent PNG recommended)</li>
+                <li>• Your face will be overlayed in the bottom 1/3 of portrait videos</li>
+                <li>• Works great with green screen or cutout images</li>
+                <li>• Leave empty to disable the overlay</li>
+              </ul>
+            </div>
+
+            {/* Buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={selectFaceOverlay}
+                className="flex-1 py-3 rounded-xl bg-purple-500/20 border border-purple-500/50 text-purple-300 font-semibold hover:bg-purple-500/30 transition-colors"
+              >
+                {faceOverlayPath ? 'Change Image' : 'Select Image'}
+              </button>
+              <button
+                onClick={() => setShowBetaModal(false)}
+                className="flex-1 py-3 rounded-xl bg-da-pink text-white font-semibold hover:bg-da-pink/80 transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

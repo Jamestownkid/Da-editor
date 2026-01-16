@@ -1,11 +1,11 @@
 /**
- * Da Editor - Settings Modal (v3)
+ * Da Editor - Settings Modal (v4)
  * =================================
- * full whisper management with scan/download/set (rules 27-32)
- * gpu check (rule 32)
- * ffmpeg check (critical)
- * delete after use (rule 69)
- * revert deleted videos (rules 71-72)
+ * FIXED:
+ * - Promise.all wrapped in try/finally so modal never gets stuck
+ * - Each check handles its own errors independently
+ * - GPU check only runs when clicked (lazy load)
+ * - Better error handling throughout
  */
 
 import { useState, useEffect } from 'react'
@@ -37,31 +37,40 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null)
   const [ffmpegStatus, setFfmpegStatus] = useState<FfmpegStatus | null>(null)
   const [scanning, setScanning] = useState(false)
+  const [checkingGpu, setCheckingGpu] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState('')
 
-  // run all checks on mount
+  // run checks on mount - FIXED: each check is independent
   useEffect(() => {
-    runAllChecks()
+    runInitialChecks()
   }, [])
 
-  const runAllChecks = async () => {
+  // FIXED: Run checks independently so one failure doesn't break others
+  const runInitialChecks = async () => {
     setScanning(true)
-    await Promise.all([
-      scanWhisper(),
-      checkGpu(),
-      checkFfmpeg()
-    ])
-    setScanning(false)
+    
+    try {
+      // Run whisper and ffmpeg checks in parallel, but each handles its own error
+      await Promise.allSettled([
+        scanWhisper(),
+        checkFfmpeg()
+      ])
+      // GPU check is now lazy - only runs when user clicks
+    } finally {
+      // FIXED: Always set scanning to false, even on error
+      setScanning(false)
+    }
   }
 
-  // scan for installed whisper models (rule 29)
+  // FIXED: Each check wrapped in try/catch, returns "unknown" on failure
   const scanWhisper = async () => {
-    if (isElectron) {
+    if (!isElectron) return
+    
+    try {
       const status = await window.electronAPI.scanWhisper()
       setWhisperStatus(status as WhisperStatus)
       
-      // show alert with which models are installed
       const installed = Object.entries(status)
         .filter(([_, isInstalled]) => isInstalled)
         .map(([model]) => model)
@@ -69,26 +78,43 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
       if (installed.length > 0) {
         console.log(`Whisper models found: ${installed.join(', ')}`)
       }
+    } catch (e) {
+      console.error('Whisper scan failed:', e)
+      // Set empty status instead of crashing
+      setWhisperStatus({ small: false, medium: false, large: false } as unknown as WhisperStatus)
     }
   }
 
-  // check gpu availability (rule 32)
+  // FIXED: GPU check is now lazy - only runs when user clicks
   const checkGpu = async () => {
-    if (isElectron) {
+    if (!isElectron) return
+    
+    setCheckingGpu(true)
+    try {
       const info = await window.electronAPI.checkGpu()
       setGpuInfo(info)
+    } catch (e) {
+      console.error('GPU check failed:', e)
+      setGpuInfo({ cuda: false, device: 'cpu', vram: 0 })
+    } finally {
+      setCheckingGpu(false)
     }
   }
 
-  // check ffmpeg/ffprobe (critical)
+  // FIXED: FFmpeg check with error handling
   const checkFfmpeg = async () => {
-    if (isElectron) {
+    if (!isElectron) return
+    
+    try {
       const status = await window.electronAPI.checkFfmpeg()
       setFfmpegStatus(status)
+    } catch (e) {
+      console.error('FFmpeg check failed:', e)
+      setFfmpegStatus({ ffmpeg: false, ffprobe: false, message: 'Check failed' })
     }
   }
 
-  // download whisper model (rule 30)
+  // download whisper model
   const downloadModel = async () => {
     if (!isElectron) return
     
@@ -105,9 +131,9 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
       }
     } catch (e) {
       setDownloadProgress('Download failed.')
+    } finally {
+      setDownloading(false)
     }
-    
-    setDownloading(false)
   }
 
   // handle input changes
@@ -131,7 +157,7 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
     onClose()
   }
 
-  // whisper models we support (rules 31)
+  // whisper models
   const whisperModels = [
     { id: 'small', name: 'Small', size: '~500MB', quality: 'Good' },
     { id: 'medium', name: 'Medium', size: '~1.5GB', quality: 'Great' },
@@ -166,12 +192,12 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
             </div>
           )}
 
-          {/* whisper section (rules 26-32) */}
+          {/* whisper section */}
           <section>
             <SectionHeader title="Whisper Settings" />
             
             <div className="mt-4 space-y-4">
-              {/* model selection (rule 31) */}
+              {/* model selection */}
               <div>
                 <label className="text-sm text-da-text-muted mb-2 block">Select Model (small/medium/large)</label>
                 <div className="grid grid-cols-3 gap-3">
@@ -205,15 +231,15 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 </div>
               </div>
 
-              {/* scan/download buttons (rules 27-30) */}
+              {/* scan/download buttons */}
               <div className="flex gap-3">
                 <button 
-                  onClick={runAllChecks} 
+                  onClick={runInitialChecks} 
                   disabled={scanning}
                   className="btn-secondary flex items-center gap-2"
                 >
                   {scanning ? (
-                    <span className="animate-spin">*</span>
+                    <span className="animate-spin">⟳</span>
                   ) : (
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -222,7 +248,6 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                   Scan Models
                 </button>
                 
-                {/* GREY OUT if model already installed */}
                 <button 
                   onClick={downloadModel}
                   disabled={downloading || whisperStatus?.[local.whisperModel as keyof WhisperStatus]}
@@ -252,7 +277,7 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 </button>
               </div>
 
-              {/* show which models are installed */}
+              {/* installed models list */}
               {whisperStatus && (
                 <div className="p-3 bg-da-medium rounded-lg">
                   <div className="text-xs text-da-text-muted mb-2">Installed Models:</div>
@@ -277,7 +302,7 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 <div className="text-sm text-da-pink animate-pulse">{downloadProgress}</div>
               )}
 
-              {/* gpu toggle (rule 32) */}
+              {/* gpu toggle - FIXED: lazy check button */}
               <div className="p-4 bg-da-medium rounded-lg">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
@@ -286,14 +311,21 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                     onChange={e => handleChange('useGpu', e.target.checked)}
                     className="w-5 h-5 rounded accent-da-pink"
                   />
-                  <div>
+                  <div className="flex-1">
                     <div className="font-medium">Use GPU (CUDA)</div>
                     <div className="text-xs text-da-text-muted">
                       {gpuInfo?.cuda 
                         ? `GPU detected: ${gpuInfo.device} (${gpuInfo.vram}GB VRAM)`
-                        : 'No GPU detected - will use CPU (slower)'}
+                        : gpuInfo ? 'No GPU detected - will use CPU (slower)' : 'Click "Check GPU" to detect'}
                     </div>
                   </div>
+                  <button 
+                    onClick={checkGpu}
+                    disabled={checkingGpu}
+                    className="btn-ghost text-xs px-2 py-1"
+                  >
+                    {checkingGpu ? '...' : 'Check GPU'}
+                  </button>
                 </label>
               </div>
             </div>
@@ -320,7 +352,6 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 </div>
               </div>
 
-              {/* volume slider (rule 42 - boost SFX volume) */}
               <div>
                 <label className="text-sm text-da-text-muted mb-2 block">
                   Sound Volume: {Math.round(local.soundVolume * 100)}%
@@ -344,7 +375,6 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
             <SectionHeader title="Video Settings" />
             
             <div className="mt-4 space-y-4">
-              {/* background color (rule 47-48) */}
               <div>
                 <label className="text-sm text-da-text-muted mb-2 block">Background Color (default: white)</label>
                 <div className="flex gap-3 items-center">
@@ -363,7 +393,6 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 </div>
               </div>
 
-              {/* background video option (rule 48) */}
               <div>
                 <label className="text-sm text-da-text-muted mb-2 block">Background Video (optional MP4 overlay)</label>
                 <div className="flex gap-3">
@@ -478,7 +507,6 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 </div>
               </div>
 
-              {/* delete after use (rule 69) */}
               <div className="p-4 bg-da-medium rounded-lg">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
@@ -490,27 +518,25 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                   <div>
                     <div className="font-medium">Delete videos after processing</div>
                     <div className="text-xs text-da-text-muted">
-                      Saves disk space - links stay in JSON for revert (rule 70)
+                      Saves disk space - links stay in JSON for revert
                     </div>
                   </div>
                 </label>
               </div>
 
-              {/* revert button (rules 71-72) */}
               <button className="btn-secondary w-full flex items-center justify-center gap-2 text-da-warning">
-                <span>~</span>
+                <span>↩</span>
                 Revert Deleted Videos
                 <span className="text-xs">(shows preview first)</span>
               </button>
             </div>
           </section>
 
-          {/* ADVANCED SETTINGS - 5 more options */}
+          {/* ADVANCED SETTINGS */}
           <section>
             <SectionHeader title="Advanced Settings" />
             
             <div className="mt-4 space-y-4">
-              {/* transition duration */}
               <div>
                 <label className="text-sm text-da-text-muted mb-2 block">
                   Transition Duration: {local.transitionDuration || 0.5}s
@@ -526,7 +552,6 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 />
               </div>
 
-              {/* max concurrent scrapers */}
               <div>
                 <label className="text-sm text-da-text-muted mb-2 block">Max Keywords to Search</label>
                 <input
@@ -540,7 +565,6 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 <span className="text-xs text-da-text-muted ml-2">More = more images, but slower</span>
               </div>
 
-              {/* auto-cleanup old jobs */}
               <div className="p-4 bg-da-medium rounded-lg">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
@@ -558,7 +582,6 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 </label>
               </div>
 
-              {/* prefer static images */}
               <div className="p-4 bg-da-medium rounded-lg">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
@@ -576,7 +599,6 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 </label>
               </div>
 
-              {/* CPU throttle */}
               <div>
                 <label className="text-sm text-da-text-muted mb-2 block">
                   CPU Throttle Level: {local.cpuThrottle || 'normal'}

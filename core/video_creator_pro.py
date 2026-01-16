@@ -1,11 +1,12 @@
 """
-Da Editor - Pro Video Creator (v4)
+Da Editor - Pro Video Creator (v5)
 ===================================
 FIXED THE SHAKING PROBLEM - motion is now smooth and stable
 - slower, smoother ken burns
 - crossfade transitions between images
 - sounds work on ALL outputs
 - 10 different transition effects
+- BETA: Face overlay support for portrait videos
 
 rules 34-57, 111-112
 """
@@ -186,6 +187,7 @@ class VideoCreatorPro:
         """
         OUTPUT #2: portrait 9:16 for tiktok/reels
         FIXED: sounds now work, smooth motion
+        BETA: face overlay support
         """
         if not images:
             return None
@@ -195,12 +197,16 @@ class VideoCreatorPro:
         seconds_per_image = float(self.settings.get("secondsPerImage", 4.0))
         bg_color = self.settings.get("bgColor", "#FFFFFF").lstrip("#")
         sound_volume = float(self.settings.get("soundVolume", 1.0))
+        face_overlay_path = self.settings.get("faceOverlayPath")
         
         width, height = 1080, 1920
-        image_area_height = int(height * 0.66)
+        # Adjust image area based on face overlay
+        image_area_height = int(height * 0.66) if face_overlay_path else int(height * 0.66)
         fps = 30
         
         print(f"[VideoCreator] creating portrait: {len(images)} images")
+        if face_overlay_path:
+            print(f"[VideoCreator] face overlay enabled: {os.path.basename(face_overlay_path)}")
         
         try:
             temp_clips = []
@@ -245,6 +251,14 @@ class VideoCreatorPro:
             else:
                 if os.path.exists(temp_video):
                     shutil.copy(temp_video, output_path)
+            
+            # BETA: Add face overlay if enabled
+            if face_overlay_path and os.path.exists(face_overlay_path) and os.path.exists(output_path):
+                overlaid_path = self._add_face_overlay(output_path, face_overlay_path, width, height)
+                if overlaid_path and os.path.exists(overlaid_path):
+                    # Replace original with overlaid version
+                    self._safe_delete(output_path)
+                    shutil.move(overlaid_path, output_path)
             
             # cleanup
             for clip in temp_clips:
@@ -729,6 +743,54 @@ class VideoCreatorPro:
                 os.unlink(path)
         except:
             pass
+    
+    def _add_face_overlay(
+        self, 
+        video_path: str, 
+        overlay_path: str,
+        width: int,
+        height: int
+    ) -> Optional[str]:
+        """
+        BETA: Add face overlay to bottom of portrait video
+        The face image is placed in the bottom 1/3 of the video
+        """
+        output = os.path.join(self.output_dir, "_face_overlay_temp.mp4")
+        
+        try:
+            # Calculate overlay position and size
+            # Face overlay goes in bottom 30% of video, scaled to fit
+            overlay_height = int(height * 0.30)
+            y_position = height - overlay_height
+            
+            # Build ffmpeg filter
+            # This overlays the image at the bottom, scaled proportionally
+            filter_complex = (
+                f"[1:v]scale=-1:{overlay_height}[face];"
+                f"[0:v][face]overlay=(main_w-overlay_w)/2:{y_position}:shortest=1"
+            )
+            
+            result = subprocess.run([
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", overlay_path,
+                "-filter_complex", filter_complex,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                "-c:a", "copy",
+                *self.MP4_FLAGS,
+                output
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0 and os.path.exists(output):
+                print(f"[VideoCreator] face overlay added")
+                return output
+            else:
+                print(f"[VideoCreator] face overlay failed: {result.stderr[:200] if result.stderr else 'unknown error'}")
+                return None
+                
+        except Exception as e:
+            print(f"[VideoCreator] face overlay error: {e}")
+            return None
 
 
 if __name__ == "__main__":

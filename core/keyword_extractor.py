@@ -1,9 +1,10 @@
 """
-Da Editor - Keyword Extractor
-==============================
-1a. extracts keywords from SRT files
-1b. uses NLP to find nouns and key phrases
-1c. filters and ranks by importance
+Da Editor - Keyword Extractor (v2)
+===================================
+FIXED:
+- NO auto-download of spaCy models at runtime (causes freezes)
+- spaCy is now truly optional - graceful fallback to regex
+- Better bigram extraction
 """
 
 import os
@@ -16,12 +17,12 @@ class KeywordExtractor:
     """
     extract searchable keywords from SRT transcripts
     
-    1a. parses SRT format
-    1b. extracts nouns and key phrases
-    1c. returns ranked list of keywords
+    v2 FIXES:
+    - spaCy is optional - never downloads at runtime
+    - falls back to regex cleanly
     """
     
-    # common words we wanna skip - they aint gonna give good images
+    # common words to skip
     STOP_WORDS = {
         "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
         "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
@@ -39,25 +40,46 @@ class KeywordExtractor:
         "um", "uh", "like", "know", "think", "got", "get", "go", "going", "gonna",
         "really", "actually", "basically", "literally", "things", "thing", "stuff",
         "something", "nothing", "everything", "someone", "anyone", "everyone", "yeah",
-        "okay", "ok", "right", "yes", "no", "maybe", "probably", "definitely"
+        "okay", "ok", "right", "yes", "no", "maybe", "probably", "definitely",
+        "want", "need", "make", "made", "let", "put", "take", "say", "said", "tell"
     }
     
-    # words that usually give good image results
+    # words that give good image results
     BOOST_WORDS = {
         "mountain", "ocean", "city", "nature", "sunset", "sunrise", "landscape",
         "building", "architecture", "technology", "science", "art", "music",
         "sports", "food", "travel", "adventure", "business", "money", "health",
-        "fitness", "fashion", "beauty", "animals", "wildlife", "space", "universe"
+        "fitness", "fashion", "beauty", "animals", "wildlife", "space", "universe",
+        "beach", "forest", "desert", "river", "lake", "sky", "clouds", "rain",
+        "snow", "winter", "summer", "spring", "autumn", "night", "day", "morning",
+        "car", "house", "office", "computer", "phone", "camera", "book", "movie"
     }
     
     def __init__(self):
-        self.nlp = None  # lazy load spacy
-        print("[Keywords] extractor ready")
+        self.nlp = None  # lazy load spacy - but NEVER download
+        self._spacy_available = None
+        print("[Keywords v2] extractor ready (no auto-download)")
+    
+    def _check_spacy(self) -> bool:
+        """Check if spaCy is available WITHOUT downloading anything"""
+        if self._spacy_available is not None:
+            return self._spacy_available
+        
+        try:
+            import spacy
+            # Try to load the model - but NEVER download
+            self.nlp = spacy.load("en_core_web_sm")
+            self._spacy_available = True
+            print("[Keywords] spaCy available")
+        except Exception as e:
+            # spaCy not available or model not installed - that's fine
+            self._spacy_available = False
+            print(f"[Keywords] spaCy not available (will use regex): {str(e)[:50]}")
+        
+        return self._spacy_available
     
     def extract_from_srt(self, srt_path: str, max_keywords: int = 30) -> List[str]:
-        """
-        1a. extract keywords from SRT file
-        """
+        """Extract keywords from SRT file"""
         if not os.path.exists(srt_path):
             print(f"[Keywords] file not found: {srt_path}")
             return []
@@ -78,9 +100,7 @@ class KeywordExtractor:
         return ranked
     
     def _parse_srt(self, content: str) -> str:
-        """
-        1b. parse SRT format and extract just the text
-        """
+        """Parse SRT format and extract just the text"""
         lines = content.split("\n")
         text_lines = []
         
@@ -94,77 +114,63 @@ class KeywordExtractor:
             if "-->" in line:
                 continue
             
-            # this is actual text
             text_lines.append(line)
         
         return " ".join(text_lines)
     
     def _extract_keywords(self, text: str) -> List[str]:
-        """
-        2a. extract candidate keywords using multiple methods
-        """
+        """Extract candidate keywords using multiple methods"""
         keywords = []
         
-        # method 1: simple word extraction
+        # method 1: simple word extraction (always works)
         words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
         filtered = [w for w in words if w not in self.STOP_WORDS]
         keywords.extend(filtered)
         
-        # method 2: try spacy for noun extraction if available
-        try:
-            keywords.extend(self._extract_nouns_spacy(text))
-        except:
-            pass
+        # method 2: try spacy ONLY if already installed (no auto-download)
+        if self._check_spacy() and self.nlp:
+            try:
+                keywords.extend(self._extract_nouns_spacy(text))
+            except Exception as e:
+                print(f"[Keywords] spaCy extraction failed: {e}")
         
-        # method 3: look for two-word phrases (bigrams)
+        # method 3: bigrams (two-word phrases)
         bigrams = self._extract_bigrams(text)
         keywords.extend(bigrams)
+        
+        # method 4: capitalized words (proper nouns)
+        proper = self._extract_proper_nouns(text)
+        keywords.extend(proper)
         
         return keywords
     
     def _extract_nouns_spacy(self, text: str) -> List[str]:
-        """
-        2b. use spacy to extract nouns and noun phrases
-        """
-        try:
-            import spacy
-            
-            if self.nlp is None:
-                try:
-                    self.nlp = spacy.load("en_core_web_sm")
-                except:
-                    # try downloading if not present
-                    import subprocess
-                    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
-                    self.nlp = spacy.load("en_core_web_sm")
-            
-            doc = self.nlp(text)
-            nouns = []
-            
-            # get nouns
-            for token in doc:
-                if token.pos_ in ["NOUN", "PROPN"] and len(token.text) > 2:
-                    nouns.append(token.text.lower())
-            
-            # get noun phrases
-            for chunk in doc.noun_chunks:
-                if len(chunk.text.split()) <= 3:  # max 3 words
-                    phrase = chunk.text.lower()
-                    # filter out phrases starting with stop words
-                    first_word = phrase.split()[0]
-                    if first_word not in self.STOP_WORDS:
-                        nouns.append(phrase)
-            
-            return nouns
-            
-        except Exception as e:
-            print(f"[Keywords] spacy extraction failed: {e}")
+        """Use spaCy to extract nouns (ONLY if already loaded)"""
+        if not self.nlp:
             return []
+        
+        doc = self.nlp(text)
+        nouns = []
+        
+        # get nouns
+        for token in doc:
+            if token.pos_ in ["NOUN", "PROPN"] and len(token.text) > 2:
+                word = token.text.lower()
+                if word not in self.STOP_WORDS:
+                    nouns.append(word)
+        
+        # get noun phrases
+        for chunk in doc.noun_chunks:
+            if len(chunk.text.split()) <= 3:
+                phrase = chunk.text.lower()
+                first_word = phrase.split()[0]
+                if first_word not in self.STOP_WORDS:
+                    nouns.append(phrase)
+        
+        return nouns
     
     def _extract_bigrams(self, text: str) -> List[str]:
-        """
-        2c. extract two-word phrases
-        """
+        """Extract two-word phrases"""
         words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
         bigrams = []
         
@@ -175,10 +181,14 @@ class KeywordExtractor:
         
         return bigrams
     
+    def _extract_proper_nouns(self, text: str) -> List[str]:
+        """Extract capitalized words that might be proper nouns"""
+        # Find words that start with capital letter
+        proper = re.findall(r'\b[A-Z][a-z]{2,}\b', text)
+        return [p.lower() for p in proper if p.lower() not in self.STOP_WORDS]
+    
     def _rank_keywords(self, keywords: List[str]) -> List[str]:
-        """
-        3a. rank keywords by frequency and quality
-        """
+        """Rank keywords by frequency and quality"""
         # count occurrences
         counts = Counter(keywords)
         
@@ -197,20 +207,22 @@ class KeywordExtractor:
             if len(kw.split()) == 1:
                 score *= 1.5
             
+            # boost longer words (more specific)
+            if len(kw) > 6:
+                score *= 1.2
+            
             scored.append((kw, score))
         
         # sort by score
         scored.sort(key=lambda x: x[1], reverse=True)
         
-        # return just the keywords
         return [kw for kw, _ in scored]
 
 
 def test_extractor():
-    """quick test with sample text"""
+    """Quick test"""
     extractor = KeywordExtractor()
     
-    # create a test SRT
     test_srt = """1
 00:00:00,000 --> 00:00:05,000
 Today we're going to explore the beautiful mountains of Colorado.
@@ -224,17 +236,14 @@ The Rocky Mountains offer amazing hiking trails and stunning landscapes.
 We'll see wildlife including bears, deer, and eagles.
 """
     
-    # save temp file
     import tempfile
     with tempfile.NamedTemporaryFile(mode="w", suffix=".srt", delete=False) as f:
         f.write(test_srt)
         temp_path = f.name
     
-    # extract keywords
     keywords = extractor.extract_from_srt(temp_path)
     print(f"[Test] Keywords: {keywords[:10]}")
     
-    # cleanup
     os.unlink(temp_path)
 
 

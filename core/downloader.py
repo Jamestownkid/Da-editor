@@ -1,52 +1,118 @@
 """
-Da Editor - Video Downloader
-=============================
-1a. uses yt-dlp to grab videos from youtube, tiktok, ig, etc
-1b. handles progress callbacks
-1c. saves to specified output directory
+Da Editor - Video Downloader (v2)
+===================================
+FIXED:
+- Retry logic with exponential backoff for 403 and network errors
+- Better filename sanitization to avoid path issues
+- Multiple user agents to avoid blocks
+- Timeout handling
 """
 
 import os
 import re
+import time
+import random
 from typing import Callable, Optional
 
 
 class VideoDownloader:
     """
-    download videos using yt-dlp
+    download videos using yt-dlp with retry logic
     supports youtube, tiktok, instagram, twitter, and more
     
-    1a. handles all the yt-dlp config
-    1b. reports progress
-    1c. returns path to downloaded file
+    v2 FIXES:
+    - Retry with backoff for 403/network errors
+    - Better error handling
+    - Sanitized filenames
     """
+    
+    # User agents for rotation
+    USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    ]
     
     def __init__(
         self,
         output_dir: str,
-        on_progress: Callable[[str], None] = None
+        on_progress: Callable[[str], None] = None,
+        max_retries: int = 3
     ):
         self.output_dir = output_dir
         self.on_progress = on_progress or (lambda x: None)
+        self.max_retries = max_retries
         
-        # make sure dir exists
         os.makedirs(output_dir, exist_ok=True)
         
-        print(f"[Downloader] ready - output: {output_dir}")
+        print(f"[Downloader v2] ready - output: {output_dir}")
+    
+    def _sanitize_filename(self, title: str) -> str:
+        """Sanitize filename to avoid issues with special characters"""
+        if not title:
+            return "video"
+        
+        # Remove or replace problematic characters
+        # Keep alphanumeric, spaces, hyphens, underscores
+        sanitized = re.sub(r'[^\w\s\-]', '', title)
+        # Replace multiple spaces/underscores with single underscore
+        sanitized = re.sub(r'[\s_]+', '_', sanitized)
+        # Limit length
+        sanitized = sanitized[:80]
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        
+        return sanitized or "video"
     
     def download(self, url: str) -> Optional[str]:
         """
-        download a single video from url
-        returns path to downloaded file or None if failed
+        Download a single video from url with retry logic
+        Returns path to downloaded file or None if failed
         """
+        last_error = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                result = self._download_attempt(url, attempt)
+                if result:
+                    return result
+            except Exception as e:
+                last_error = e
+                error_str = str(e).lower()
+                
+                # Check if it's a retryable error
+                is_retryable = any(x in error_str for x in [
+                    '403', '429', '503', 'timeout', 'connection', 
+                    'network', 'temporary', 'unavailable'
+                ])
+                
+                if is_retryable and attempt < self.max_retries - 1:
+                    # Exponential backoff with jitter
+                    delay = (2 ** attempt) + random.uniform(0, 1)
+                    self.on_progress(f"Retry {attempt + 1}/{self.max_retries} in {delay:.1f}s: {str(e)[:50]}...")
+                    time.sleep(delay)
+                else:
+                    break
+        
+        if last_error:
+            print(f"[Downloader] failed after {self.max_retries} attempts: {last_error}")
+        
+        return None
+    
+    def _download_attempt(self, url: str, attempt: int = 0) -> Optional[str]:
+        """Single download attempt"""
         try:
             import yt_dlp
         except ImportError:
             print("[Downloader] yt-dlp not installed! run: pip install yt-dlp")
             return None
         
-        # 1a. set up yt-dlp options
-        output_template = os.path.join(self.output_dir, "%(title)s.%(ext)s")
+        # Use different user agent on retries
+        user_agent = self.USER_AGENTS[attempt % len(self.USER_AGENTS)]
+        
+        # Get sanitized filename
+        output_template = os.path.join(self.output_dir, "%(title).80s.%(ext)s")
         
         ydl_opts = {
             # format selection - get best mp4
@@ -63,44 +129,115 @@ class VideoDownloader:
             "postprocessor_hooks": [self._postprocess_hook],
             # other options
             "ignoreerrors": False,
-            "noplaylist": True,  # just single videos
+            "noplaylist": True,
             "extract_flat": False,
+            # Retry options
+            "retries": 3,
+            "fragment_retries": 3,
+            "skip_unavailable_fragments": True,
+            # Network options
+            "socket_timeout": 30,
+            # User agent
+            "http_headers": {
+                "User-Agent": user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-us,en;q=0.5",
+            },
+            # Extractor args for different platforms
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "web"],
+                },
+                "tiktok": {
+                    "api_hostname": "api16-normal-c-useast1a.tiktokv.com",
+                },
+            },
         }
         
-        # 1b. run the download
+        # For TikTok, add special options
+        if "tiktok.com" in url.lower():
+            ydl_opts["format"] = "best"  # TikTok usually has single format
+        
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 
                 if info:
-                    # figure out the actual filename
+                    # Sanitize the title for filename lookup
+                    title = self._sanitize_filename(info.get("title", "video"))
+                    
+                    # Try to find the downloaded file
                     filename = ydl.prepare_filename(info)
-                    # might have different extension after merge
                     base = os.path.splitext(filename)[0]
+                    
                     for ext in [".mp4", ".webm", ".mkv", ".m4a"]:
                         path = base + ext
                         if os.path.exists(path):
-                            print(f"[Downloader] saved: {path}")
-                            return path
+                            # Rename to sanitized filename if needed
+                            final_path = self._ensure_safe_path(path)
+                            print(f"[Downloader] saved: {final_path}")
+                            return final_path
                     
-                    # fallback - check if original exists
-                    if os.path.exists(filename):
-                        return filename
+                    # Try finding by sanitized title
+                    for ext in [".mp4", ".webm", ".mkv"]:
+                        possible_path = os.path.join(self.output_dir, title + ext)
+                        if os.path.exists(possible_path):
+                            return possible_path
+                    
+                    # Last resort: find most recent file
+                    recent = self._find_most_recent_video()
+                    if recent:
+                        return recent
                     
                     print(f"[Downloader] warning: couldn't find downloaded file")
                     return None
-                
+                    
         except Exception as e:
-            print(f"[Downloader] failed: {e}")
-            return None
+            # Re-raise to trigger retry
+            raise RuntimeError(f"Download failed: {e}")
+        
+        return None
+    
+    def _ensure_safe_path(self, path: str) -> str:
+        """Rename file to safe path if current path has issues"""
+        if not os.path.exists(path):
+            return path
+        
+        dirname = os.path.dirname(path)
+        basename = os.path.basename(path)
+        name, ext = os.path.splitext(basename)
+        
+        # Check if name has problematic characters
+        safe_name = self._sanitize_filename(name)
+        if safe_name != name:
+            new_path = os.path.join(dirname, safe_name + ext)
+            if not os.path.exists(new_path):
+                try:
+                    os.rename(path, new_path)
+                    return new_path
+                except:
+                    pass
+        
+        return path
+    
+    def _find_most_recent_video(self) -> Optional[str]:
+        """Find the most recently created video file in output dir"""
+        videos = []
+        for f in os.listdir(self.output_dir):
+            if f.endswith(('.mp4', '.webm', '.mkv')):
+                path = os.path.join(self.output_dir, f)
+                mtime = os.path.getmtime(path)
+                videos.append((path, mtime))
+        
+        if videos:
+            # Sort by modification time, newest first
+            videos.sort(key=lambda x: x[1], reverse=True)
+            return videos[0][0]
         
         return None
     
     def _progress_hook(self, d):
-        """
-        2a. called by yt-dlp during download
-        reports progress to callback
-        """
+        """Called by yt-dlp during download"""
         status = d.get("status")
         
         if status == "downloading":
@@ -120,9 +257,7 @@ class VideoDownloader:
             self.on_progress("Download complete, processing...")
     
     def _postprocess_hook(self, d):
-        """
-        2b. called after download when postprocessing
-        """
+        """Called after download when postprocessing"""
         status = d.get("status")
         if status == "started":
             self.on_progress("Processing video...")
@@ -130,10 +265,7 @@ class VideoDownloader:
             self.on_progress("Processing complete")
     
     def get_info(self, url: str) -> Optional[dict]:
-        """
-        3a. get video info without downloading
-        useful for checking title, duration, etc
-        """
+        """Get video info without downloading"""
         try:
             import yt_dlp
         except ImportError:
@@ -143,6 +275,7 @@ class VideoDownloader:
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
+            "socket_timeout": 15,
         }
         
         try:
