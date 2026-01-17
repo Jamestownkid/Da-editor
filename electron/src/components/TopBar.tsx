@@ -138,7 +138,7 @@ export default function TopBar({
               
               <button
                 onClick={() => { 
-                  window.open('https://sparklylabs.com', '_blank')
+                  window.open('https://sparklylabz.com', '_blank')
                   setMenuOpen(false) 
                 }}
                 className="w-full px-4 py-2 text-left text-sm hover:bg-da-light flex items-center gap-2 text-da-pink"
@@ -146,7 +146,7 @@ export default function TopBar({
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
                 </svg>
-                SparklyLabs.com
+                SparklyLabz.com
               </button>
             </div>
           )}

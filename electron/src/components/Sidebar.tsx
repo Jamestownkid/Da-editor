@@ -12,6 +12,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { Job } from '../types'
+import JobProgress, { DEFAULT_JOB_STEPS, parseTimeline } from './JobProgress'
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI
 
@@ -179,10 +180,17 @@ export default function Sidebar({
               )}
             </div>
           )}
+
+          {/* PROGRESS CAPSULES - shows 10 steps visual */}
+          {runningCount > 0 && (
+            <div className="mt-3">
+              <JobProgress steps={DEFAULT_JOB_STEPS} compact={true} />
+            </div>
+          )}
         </div>
       </div>
 
-      {/* STATUS BADGES - animated */}
+      {/* STATUS BADGES - animated with REFRESH button */}
       <div className="px-4 py-3 flex gap-2 border-b border-da-light/20">
         <span className="badge-pending animate-bounce" style={{animationDelay: '0s', animationDuration: '2s'}}>{pendingCount}</span>
         <span className="badge-running">{runningCount}</span>

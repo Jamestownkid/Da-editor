@@ -618,7 +618,20 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
 
           {/* system status */}
           <section>
-            <SectionHeader title="System Status" />
+            <div className="flex items-center justify-between">
+              <SectionHeader title="System Status" />
+              <button
+                onClick={runInitialChecks}
+                disabled={scanning}
+                className="px-3 py-1 text-xs rounded-lg bg-da-medium hover:bg-da-light border border-da-light/30 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                title="Refresh system stats"
+              >
+                <svg className={`w-3.5 h-3.5 ${scanning ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {scanning ? 'Checking...' : 'Refresh Stats'}
+              </button>
+            </div>
             <div className="mt-4 grid grid-cols-2 gap-3">
               <StatusItem 
                 label="FFmpeg" 
@@ -629,8 +642,9 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
                 ok={ffmpegStatus?.ffprobe ?? false} 
               />
               <StatusItem 
-                label="CUDA GPU" 
-                ok={gpuInfo?.cuda ?? false} 
+                label={gpuInfo?.cuda ? `CUDA: ${gpuInfo.device}` : 'CUDA GPU'}
+                ok={gpuInfo?.cuda ?? false}
+                detail={gpuInfo?.cuda ? `${gpuInfo.vram}GB VRAM` : checkingGpu ? 'Checking...' : 'Not detected'}
               />
               <StatusItem 
                 label={`Whisper ${local.whisperModel}`}
@@ -659,13 +673,13 @@ function SectionHeader({ title }: { title: string }) {
   )
 }
 
-function StatusItem({ label, ok }: { label: string; ok: boolean }) {
+function StatusItem({ label, ok, detail }: { label: string; ok: boolean; detail?: string }) {
   return (
     <div className={`p-3 rounded-lg ${ok ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
       <div className="flex items-center gap-2">
         <div className={`w-2 h-2 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`} />
-        <span className="text-sm">{label}</span>
-        <span className="text-xs ml-auto">{ok ? 'OK' : 'Missing'}</span>
+        <span className="text-sm truncate">{label}</span>
+        <span className="text-xs ml-auto">{detail || (ok ? 'OK' : 'Missing')}</span>
       </div>
     </div>
   )
