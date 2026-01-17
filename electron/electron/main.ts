@@ -197,6 +197,8 @@ ipcMain.handle('scan-jobs', async (_, rootFolder) => {
       try {
         const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
         // FIXED: attach folder path so UI can reference it
+        // Use both 'folder' (expected by Job type) and 'jobFolder' (backwards compat)
+        data.folder = folderPath
         data.jobFolder = folderPath
         data.folderName = folder
         jobs.push(data)

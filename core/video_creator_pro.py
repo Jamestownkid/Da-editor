@@ -53,15 +53,29 @@ class VideoCreatorPro:
         os.makedirs(output_dir, exist_ok=True)
         
         self.sound_files = []
-        if sounds_dir and os.path.isdir(sounds_dir):
-            for f in os.listdir(sounds_dir):
-                if f.endswith((".mp3", ".wav", ".ogg", ".m4a")):
-                    self.sound_files.append(os.path.join(sounds_dir, f))
+        
+        # Try multiple locations for sounds folder
+        sounds_search_paths = [
+            sounds_dir,
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "sounds"),
+            os.path.join(os.path.dirname(__file__), "..", "assets", "sounds"),
+            "/home/admin/Downloads/Da-editor/assets/sounds",
+        ]
+        
+        for spath in sounds_search_paths:
+            if spath and os.path.isdir(spath):
+                self.sounds_dir = spath
+                for f in os.listdir(spath):
+                    if f.endswith((".mp3", ".wav", ".ogg", ".m4a")):
+                        self.sound_files.append(os.path.join(spath, f))
+                if self.sound_files:
+                    break
         
         if not self._check_ffmpeg():
             print("[VideoCreator] WARNING: ffmpeg not found!")
         
-        print(f"[VideoCreator v6] SINGLE FILTERGRAPH mode - {len(self.sound_files)} sounds")
+        motion = self.settings.get("motionLevel", "slow")  # off, slow, medium
+        print(f"[VideoCreator v6] SINGLE FILTERGRAPH - {len(self.sound_files)} sounds, motion={motion}")
     
     def _check_ffmpeg(self) -> bool:
         try:
@@ -183,14 +197,27 @@ class VideoCreatorPro:
         
         for i in range(n):
             # Choose motion effect
-            effect = random.choice(["zoom_in", "zoom_out", "static"])
+            # Motion level: "off", "slow", "medium" (default: slow to prevent shakiness)
+            motion_level = self.settings.get("motionLevel", "slow")
             
-            if effect == "zoom_in":
-                zoom = f"1+0.05*on/{total_frames}"
-            elif effect == "zoom_out":
-                zoom = f"1.05-0.05*on/{total_frames}"
-            else:
+            if motion_level == "off":
+                # No motion - completely static (best for shaky-sensitive viewers)
                 zoom = "1"
+            elif motion_level == "slow":
+                # Very subtle motion - barely noticeable (REDUCES SHAKINESS)
+                effect = random.choice(["zoom_in", "static", "static"])  # 66% static
+                if effect == "zoom_in":
+                    zoom = f"1+0.015*on/{total_frames}"  # Very slow 1.5% zoom
+                else:
+                    zoom = "1"
+            else:  # medium
+                effect = random.choice(["zoom_in", "zoom_out", "static"])
+                if effect == "zoom_in":
+                    zoom = f"1+0.03*on/{total_frames}"  # Reduced from 0.05
+                elif effect == "zoom_out":
+                    zoom = f"1.03-0.03*on/{total_frames}"
+                else:
+                    zoom = "1"
             
             # Each image gets scaled, padded, and zoompan applied
             filters.append(
@@ -537,11 +564,12 @@ class VideoCreatorPro:
         for i, img in enumerate(images):
             clip_path = os.path.join(self.output_dir, f"_p_clip_{i:03d}.mp4")
             
-            # Simple filter: scale to fit, pad to full portrait
+            # Simple filter: scale to fit, pad to TOP (B-roll touches top, white space at bottom)
+            # FIXED: y=0 instead of (oh-ih)/2 so image touches TOP
             filter_chain = (
                 f"scale={width}:{image_area_height}:force_original_aspect_ratio=decrease,"
-                f"pad={width}:{image_area_height}:(ow-iw)/2:(oh-ih)/2:color=#{bg_color},"
-                f"pad={width}:{height}:0:0:color=#{bg_color},"
+                f"pad={width}:{image_area_height}:(ow-iw)/2:0:color=#{bg_color},"  # y=0 for TOP
+                f"pad={width}:{height}:0:0:color=#{bg_color},"  # add white space at bottom
                 f"fps={fps},format=yuv420p"
             )
             

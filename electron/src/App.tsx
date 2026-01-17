@@ -45,6 +45,8 @@ export default function App() {
   const [systemStats, setSystemStats] = useState<{ cpu: number; ram: number; disk: number } | null>(null)
   const [showBetaModal, setShowBetaModal] = useState(false)
   const [faceOverlayPath, setFaceOverlayPath] = useState<string | null>(null)
+  const [overlayTarget, setOverlayTarget] = useState<'instagram' | 'youtube-corner' | 'all'>('instagram')
+  const [overlayPosition, setOverlayPosition] = useState<'bottom' | 'top-right' | 'top-left'>('bottom')
   const [timeEstimate, setTimeEstimate] = useState<{ totalMinutes: number; completedMinutes: number; currentStep: string } | null>(null)
   const [jobHistory, setJobHistory] = useState<JobHistory[]>([])
   
@@ -674,10 +676,11 @@ export default function App() {
     }
   }
 
-  // Select face overlay file for BETA feature
+  // Select face overlay VIDEO for BETA feature
   const selectFaceOverlay = async () => {
     if (isElectron) {
       const file = await window.electronAPI.selectFile([
+        { name: 'Videos', extensions: ['mp4', 'mov', 'webm', 'avi'] },
         { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }
       ])
       if (file) {
@@ -755,11 +758,11 @@ export default function App() {
       {/* BETA Face Overlay Modal */}
       {showBetaModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-          <div className="bg-da-dark rounded-2xl p-6 w-full max-w-md border border-purple-500/30 shadow-xl shadow-purple-500/20">
+          <div className="bg-da-dark rounded-2xl p-6 w-full max-w-lg border border-purple-500/30 shadow-xl shadow-purple-500/20">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
                 <span className="px-2 py-1 rounded bg-purple-500/30 text-purple-300 text-xs font-bold">BETA</span>
-                <h2 className="text-xl font-bold text-white">Face Overlay</h2>
+                <h2 className="text-xl font-bold text-white">Face Video Overlay</h2>
               </div>
               <button 
                 onClick={() => setShowBetaModal(false)}
@@ -771,20 +774,18 @@ export default function App() {
               </button>
             </div>
 
-            <p className="text-da-text-muted text-sm mb-6">
-              Select an image with your face to overlay at the bottom of portrait videos. 
+            <p className="text-da-text-muted text-sm mb-4">
+              Select a video with your face (reaction, talking head, etc.) to overlay on outputs. 
               Great for reaction-style content!
             </p>
 
             {/* Preview area */}
-            <div className="mb-6">
+            <div className="mb-4">
               {faceOverlayPath ? (
                 <div className="relative">
-                  <img 
-                    src={`file://${faceOverlayPath}`} 
-                    alt="Face overlay" 
-                    className="w-full h-48 object-contain bg-da-medium rounded-xl"
-                  />
+                  <div className="w-full h-32 bg-da-medium rounded-xl flex items-center justify-center">
+                    <span className="text-green-400 text-sm">✓ {faceOverlayPath.split('/').pop()}</span>
+                  </div>
                   <button
                     onClick={() => setFaceOverlayPath(null)}
                     className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-500 rounded-lg transition-colors"
@@ -797,24 +798,90 @@ export default function App() {
               ) : (
                 <div 
                   onClick={selectFaceOverlay}
-                  className="w-full h-48 bg-da-medium rounded-xl border-2 border-dashed border-da-light/30 hover:border-purple-500/50 flex flex-col items-center justify-center cursor-pointer transition-colors"
+                  className="w-full h-32 bg-da-medium rounded-xl border-2 border-dashed border-da-light/30 hover:border-purple-500/50 flex flex-col items-center justify-center cursor-pointer transition-colors"
                 >
-                  <svg className="w-12 h-12 text-da-text-muted mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  <svg className="w-10 h-10 text-da-text-muted mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
-                  <span className="text-da-text-muted text-sm">Click to select image</span>
+                  <span className="text-da-text-muted text-sm">Click to select video/image</span>
                 </div>
               )}
             </div>
 
+            {/* Overlay Target */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-da-text-muted mb-2">Apply to which output?</label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => setOverlayTarget('instagram')}
+                  className={`py-2 px-3 rounded-lg text-xs font-medium transition-colors ${
+                    overlayTarget === 'instagram' 
+                      ? 'bg-purple-500 text-white' 
+                      : 'bg-da-medium text-da-text-muted hover:bg-da-light'
+                  }`}
+                >
+                  Instagram (Bottom)
+                </button>
+                <button
+                  onClick={() => setOverlayTarget('youtube-corner')}
+                  className={`py-2 px-3 rounded-lg text-xs font-medium transition-colors ${
+                    overlayTarget === 'youtube-corner' 
+                      ? 'bg-purple-500 text-white' 
+                      : 'bg-da-medium text-da-text-muted hover:bg-da-light'
+                  }`}
+                >
+                  YouTube (Corner)
+                </button>
+                <button
+                  onClick={() => setOverlayTarget('all')}
+                  className={`py-2 px-3 rounded-lg text-xs font-medium transition-colors ${
+                    overlayTarget === 'all' 
+                      ? 'bg-purple-500 text-white' 
+                      : 'bg-da-medium text-da-text-muted hover:bg-da-light'
+                  }`}
+                >
+                  All Outputs
+                </button>
+              </div>
+            </div>
+
+            {/* Position for YouTube */}
+            {overlayTarget !== 'instagram' && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-da-text-muted mb-2">Corner position (YouTube)</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setOverlayPosition('top-right')}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${
+                      overlayPosition === 'top-right' 
+                        ? 'bg-purple-500 text-white' 
+                        : 'bg-da-medium text-da-text-muted hover:bg-da-light'
+                    }`}
+                  >
+                    Top Right
+                  </button>
+                  <button
+                    onClick={() => setOverlayPosition('top-left')}
+                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${
+                      overlayPosition === 'top-left' 
+                        ? 'bg-purple-500 text-white' 
+                        : 'bg-da-medium text-da-text-muted hover:bg-da-light'
+                    }`}
+                  >
+                    Top Left
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Instructions */}
-            <div className="bg-da-medium rounded-lg p-4 mb-6">
-              <h4 className="text-sm font-semibold text-purple-300 mb-2">How it works:</h4>
-              <ul className="text-xs text-da-text-muted space-y-1">
-                <li>• Select a PNG/JPG with your face (transparent PNG recommended)</li>
-                <li>• Your face will be overlayed in the bottom 1/3 of portrait videos</li>
-                <li>• Works great with green screen or cutout images</li>
-                <li>• Leave empty to disable the overlay</li>
+            <div className="bg-da-medium rounded-lg p-3 mb-4">
+              <h4 className="text-xs font-semibold text-purple-300 mb-1">How it works:</h4>
+              <ul className="text-xs text-da-text-muted space-y-0.5">
+                <li>• Select your face video (MP4, MOV, etc.)</li>
+                <li>• Instagram: overlays at bottom 1/3 of portrait video</li>
+                <li>• YouTube: overlays in chosen corner of landscape video</li>
+                <li>• If your video is longer, B-roll extends to match</li>
               </ul>
             </div>
 
@@ -824,7 +891,7 @@ export default function App() {
                 onClick={selectFaceOverlay}
                 className="flex-1 py-3 rounded-xl bg-purple-500/20 border border-purple-500/50 text-purple-300 font-semibold hover:bg-purple-500/30 transition-colors"
               >
-                {faceOverlayPath ? 'Change Image' : 'Select Image'}
+                {faceOverlayPath ? 'Change Video' : 'Select Video'}
               </button>
               <button
                 onClick={() => setShowBetaModal(false)}

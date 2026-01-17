@@ -100,11 +100,12 @@ class JobRunner:
     - face overlay support
     """
     
-    # HARD TIME LIMITS
-    MAX_JOB_TIME = 45 * 60  # 45 minutes
-    MAX_STEP_TIME = 15 * 60  # 15 minutes per step
-    MAX_DOWNLOAD_TIME = 10 * 60  # 10 minutes for downloads
-    MAX_SCRAPE_TIME = 10 * 60  # 10 minutes for image scraping
+    # HARD TIME LIMITS (reduced per user request - 30min max)
+    MAX_JOB_TIME = 30 * 60  # 30 minutes MAX - auto-skip if exceeded
+    MAX_STEP_TIME = 8 * 60  # 8 minutes per step max
+    MAX_DOWNLOAD_TIME = 6 * 60  # 6 minutes for downloads
+    MAX_SCRAPE_TIME = 5 * 60  # 5 minutes for image scraping
+    MAX_RENDER_TIME = 10 * 60  # 10 minutes for each render step
     MAX_RENDER_TIME = 20 * 60  # 20 minutes for rendering
     
     def __init__(self, job_folder: str, settings: dict):
@@ -139,8 +140,28 @@ class JobRunner:
         # timeout handling
         self._setup_timeout_handler()
         
+        # Timeline tracking for debugging/EST
+        self.timeline = []
+        
         log(f"job runner v4 initialized: {job_folder}")
         log(f"  max job time: {self.MAX_JOB_TIME // 60} minutes")
+    
+    def _log_step(self, step_name: str, status: str = "start"):
+        """Log step to timeline for debugging and EST tracking"""
+        elapsed = time.time() - self.job_start_time
+        entry = {
+            "step": step_name,
+            "status": status,
+            "elapsed_seconds": round(elapsed, 1),
+            "elapsed_display": f"{elapsed/60:.1f}m",
+            "timestamp": datetime.now().isoformat()
+        }
+        self.timeline.append(entry)
+        
+        if status == "start":
+            log(f"[TIMELINE] ▶ {step_name} started at {entry['elapsed_display']}")
+        else:
+            log(f"[TIMELINE] ✓ {step_name} {status} at {entry['elapsed_display']}")
     
     def _setup_timeout_handler(self):
         """Setup signal handler for job timeout"""
@@ -191,6 +212,37 @@ class JobRunner:
             f.write(f"[{timestamp}] {msg}\n")
         error(msg)
     
+    def _save_timeline(self):
+        """Save timeline to JSON for debugging and EST tracking"""
+        timeline_path = os.path.join(self.job_folder, "timeline.json")
+        total_elapsed = time.time() - self.job_start_time
+        
+        timeline_data = {
+            "job_id": self.job.get("id"),
+            "total_seconds": round(total_elapsed, 1),
+            "total_display": f"{total_elapsed/60:.1f} minutes",
+            "steps": self.timeline,
+            "summary": {}
+        }
+        
+        # Calculate per-step durations
+        for i, entry in enumerate(self.timeline):
+            if entry["status"] == "start":
+                step = entry["step"]
+                # Find matching done entry
+                for j in range(i+1, len(self.timeline)):
+                    if self.timeline[j]["step"] == step and self.timeline[j]["status"] == "done":
+                        duration = self.timeline[j]["elapsed_seconds"] - entry["elapsed_seconds"]
+                        timeline_data["summary"][step] = f"{duration:.1f}s"
+                        break
+        
+        with open(timeline_path, "w") as f:
+            json.dump(timeline_data, f, indent=2)
+        
+        log(f"[TIMELINE] Total: {timeline_data['total_display']}")
+        for step, dur in timeline_data["summary"].items():
+            log(f"  • {step}: {dur}")
+    
     def _save_links_txt(self):
         """save links.txt with [SRT][IMG] markers"""
         lines = []
@@ -210,11 +262,12 @@ class JobRunner:
         """main entry - runs the whole pipeline with time limits"""
         try:
             # safety check first
-            log("checking system resources...")
+            self._log_step("system_check", "start")
             status = self.monitor.check()
             if not status["safe"]:
                 self._log_error(f"system not safe to run: {status}")
                 return False
+            self._log_step("system_check", "done")
             
             # save links.txt
             self._save_links_txt()
@@ -224,33 +277,42 @@ class JobRunner:
             self._save_job()
             
             # step 1: download all videos
-            log("step 1: downloading videos...")
+            self._log_step("download", "start")
             self.step_start_time = time.time()
             self._download_videos()
+            self._log_step("download", "done")
             
             # step 2: generate SRT for marked links
-            log("step 2: generating SRT files...")
+            self._log_step("transcription", "start")
             self.step_start_time = time.time()
             self._generate_srt()
+            self._log_step("transcription", "done")
             
             # step 3: extract keywords from SRT
-            log("step 3: extracting keywords...")
+            self._log_step("keywords", "start")
             self.step_start_time = time.time()
             keywords = self._extract_keywords()
+            self._log_step("keywords", "done")
             
             # step 4: scrape images with fallback
-            log("step 4: scraping images...")
+            self._log_step("scrape_images", "start")
             self.step_start_time = time.time()
             self._scrape_images_with_fallback(keywords)
+            self._log_step("scrape_images", "done")
             
             # step 5: create video outputs
-            log("step 5: creating video outputs...")
+            self._log_step("render_videos", "start")
             self.step_start_time = time.time()
             self._create_outputs()
+            self._log_step("render_videos", "done")
             
             # step 6: validate outputs
-            log("step 6: validating outputs...")
+            self._log_step("validate", "start")
             self._validate_outputs()
+            self._log_step("validate", "done")
+            
+            # Save timeline to file for debugging
+            self._save_timeline()
             
             # mark as done
             self.job["status"] = "done"
@@ -303,6 +365,9 @@ class JobRunner:
             existing = url_data.get("downloaded_path")
             if existing and os.path.exists(existing):
                 log(f"already downloaded: {os.path.basename(existing)}")
+                # CRITICAL FIX: ensure platform is set even for already-downloaded videos
+                if not url_data.get("platform"):
+                    url_data["platform"] = self._detect_platform(url)
                 downloaded.append(url_data)
                 continue
             
